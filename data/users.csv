@@ -1,0 +1,4 @@
+username,password,full_name,role
+admin,admin123,System Administrator,Admin
+guard1,password123,John Doe (Senior Guard),Security
+guard2,hit2024,Jane Smith,Security

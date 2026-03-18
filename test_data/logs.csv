@@ -1,0 +1,2 @@
+timestamp,student_id,student_name,laptop_serial,verification_type,location,verified_by,status
+2026-03-18T16:27:12.575880,TEST001,Test User,SN000,QR Scan,Main Gate,Security Guard,STOLEN DEVICE DETECTED
