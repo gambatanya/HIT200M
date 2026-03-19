@@ -1104,55 +1104,55 @@ def main():
             # Statistics for Admin/Security
             stats = asset_manager.get_statistics()
         
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>Total Devices</h3>
-                <h2>{stats['total_devices']}</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>Verified Today</h3>
-                <h2>{stats['verified_today']}</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>Total Verifications</h3>
-                <h2>{stats['total_verifications']}</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col4:
-            success_rate = (stats['successful_verifications'] / stats['total_verifications'] * 100) if stats['total_verifications'] > 0 else 0
-            st.markdown(f"""
-            <div class="metric-card">
-                <h3>Success Rate</h3>
-                <h2>{success_rate:.1f}%</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-             st.markdown(f"""
-            <div class="metric-card" style="background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);">
-                <h3>Devices Reported Stolen</h3>
-                <h2>{stats['stolen_reported']}</h2>
-            </div>
-            """, unsafe_allow_html=True)
-        with col2:
-             st.markdown(f"""
-            <div class="metric-card" style="background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);">
-                <h3>Stolen Devices Detected</h3>
-                <h2>{stats['stolen_detected']}</h2>
-            </div>
-            """, unsafe_allow_html=True)
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3>Total Devices</h3>
+                    <h2>{stats['total_devices']}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3>Verified Today</h3>
+                    <h2>{stats['verified_today']}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col3:
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3>Total Verifications</h3>
+                    <h2>{stats['total_verifications']}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                success_rate = (stats['successful_verifications'] / stats['total_verifications'] * 100) if stats['total_verifications'] > 0 else 0
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h3>Success Rate</h3>
+                    <h2>{success_rate:.1f}%</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                 st.markdown(f"""
+                <div class="metric-card" style="background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);">
+                    <h3>Devices Reported Stolen</h3>
+                    <h2>{stats['stolen_reported']}</h2>
+                </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                 st.markdown(f"""
+                <div class="metric-card" style="background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);">
+                    <h3>Stolen Devices Detected</h3>
+                    <h2>{stats['stolen_detected']}</h2>
+                </div>
+                """, unsafe_allow_html=True)
         
         # Quick actions
       #  st.markdown("---")
