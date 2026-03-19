@@ -788,37 +788,43 @@ def main():
         transform: translateY(-2px);
     }
     
-    /* Glass floating elements background */
-    .glass-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        pointer-events: none;
-        z-index: -1;
         overflow: hidden;
-        background: radial-gradient(circle at 50% 50%, #f8fafc 0%, #e2e8f0 100%);
     }
 
-    .glass-element {
-        position: absolute;
-        background: rgba(255, 255, 255, 0.03);
-        backdrop-filter: blur(15px) !important;
-        -webkit-backdrop-filter: blur(15px) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        animation: float-bg 35s infinite ease-in-out;
-        opacity: 0.8;
-        box-shadow: 0 0 40px rgba(34, 211, 238, 0.05);
-    }
-
-    .glass-sphere {
-        border-radius: 50%;
-    }
-
-    .glass-cube {
-        border-radius: 20%;
-        transform: rotate(45deg);
+    /* Mobile responsive adjustments */
+    @media (max-width: 768px) {
+        .main-header {
+            font-size: 1.6rem !important;
+            padding: 1.5rem 1rem !important;
+            margin-bottom: 1.5rem !important;
+            border-radius: 15px !important;
+        }
+        .sub-header {
+            font-size: 1.5rem !important;
+            margin: 0.5rem 0 1rem 0 !important;
+        }
+        .metric-card {
+            padding: 1.5rem 1rem !important;
+        }
+        .metric-card h2 {
+            font-size: 2rem !important;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 0.6rem 0.8rem !important;
+            font-size: 0.85rem !important;
+        }
+        /* Reduce padding in containers for more space */
+        [data-testid="stVerticalBlock"] > div:has(div.sub-header), 
+        [data-testid="stVerticalBlock"] > div:has(div.info-box),
+        .stTabs, .stForm {
+            padding: 1rem !important;
+            border-radius: 1rem !important;
+        }
+        /* Ensure buttons are easy to tap */
+        .stButton button {
+            padding: 0.85rem !important;
+            font-size: 1rem !important;
+        }
     }
 
     @keyframes float-bg {
