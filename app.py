@@ -455,6 +455,30 @@ class AssetManager:
             stats['failed_verifications'] = len(logs_df[logs_df['status'].str.startswith('FAILED')])
         
         return stats
+    
+    def decode_qr(self, image_bytes):
+        """Decode a QR code from image bytes using OpenCV."""
+        try:
+            import cv2
+            import numpy as np
+            
+            # Convert bytes to numpy array
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            
+            if img is None:
+                return None
+                
+            # Decode using OpenCV's QRCodeDetector
+            detector = cv2.QRCodeDetector()
+            data, vertices_array, _ = detector.detectAndDecode(img)
+            
+            if vertices_array is not None and data:
+                return data
+            return None
+        except Exception as e:
+            print(f"QR Decoding Error: {e}")
+            return None
 
 def convert_to_excel(df):
     """Convert DataFrame to Excel format with error handling"""
@@ -1326,177 +1350,98 @@ Keep this QR code securely attached to your device.
     elif choice == "🔍 Verify Ownership":
         st.markdown('<div class="sub-header">Device Verification</div>', unsafe_allow_html=True)
         
-        tab1, tab2 = st.tabs(["📱 QR Code Verification", "🔢 Manual Verification"])
+        verify_tab1, verify_tab2 = st.tabs(["📷 Scan QR Code", "⌨️ Manual Search"])
         
-        with tab1:
-            st.subheader("QR Code Scanner")
+        with verify_tab1:
+            st.markdown("### 📷 Live QR Scanner")
+            st.info("💡 Point your camera at the device's QR code and capture the image.")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                location = st.selectbox("Verification Location", 
-                                      ["Main Gate", "Library", "Hostel", "Lecture Hall", "Other"])
-                verified_by = st.text_input("Verified By", value=st.session_state.user['full_name'], placeholder="Your name")
+            # Location and Verifier
+            col_l1, col_l2 = st.columns(2)
+            with col_l1:
+                v_location = st.selectbox("Location", ["Main Gate", "Library", "Hostel", "Lecture Hall", "Checkpoint"], key="qr_v_loc")
+            with col_l2:
+                v_name = st.text_input("Verified By", value=st.session_state.user['full_name'], key="qr_v_name")
+
+            camera_image = st.camera_input("Scanner", label_visibility="collapsed")
             
-            st.markdown('<div class="info-box">📸 **Instructions:** Use a QR scanner app on your phone or upload a QR code image below.</div>', unsafe_allow_html=True)
-            
-            uploaded_file = st.file_uploader("Upload QR Code Image", type=['png', 'jpg', 'jpeg'])
-            
-            if uploaded_file is not None:
-                # Display uploaded image
-                image = Image.open(uploaded_file)
-                st.image(image, caption="Uploaded QR Code", width=300)
-                
-                st.markdown('<div class="info-box">🔧 **Note:** In production, this would automatically decode QR codes using libraries like pyzbar</div>', unsafe_allow_html=True)
-                
-                # Manual QR data input for demo
-                st.subheader("Or Enter QR Code Data Manually")
-                qr_data = st.text_area("QR Code Data", placeholder='Paste QR code data here (JSON format)...', height=100)
-                
-                if st.button("🔍 Verify QR Code", use_container_width=True):
-                    if qr_data.strip():
-                        success, result = asset_manager.verify_laptop(qr_data, location, verified_by)
+            if camera_image:
+                with st.spinner("Decoding QR Code..."):
+                    qr_data = asset_manager.decode_qr(camera_image.getvalue())
+                    
+                    if qr_data:
+                        success, result = asset_manager.verify_laptop(qr_data, v_location, v_name)
                         
-                        if success:
-                            if success == "STOLEN":
-                                st.error("🚨 STOLEN DEVICE DETECTED! 🚨")
-                                st.markdown('<div class="error-box">', unsafe_allow_html=True)
-                                st.subheader("⚠️ SECURITY ALERT")
-                                st.write("This device has been reported as **STOLEN** or **LOST**.")
-                                if isinstance(result, (pd.Series, dict)):
-                                    st.write(f"**Owner:** {result['student_name']} ({result['student_id']})")
-                                    st.write(f"**Serial:** {result['laptop_serial']}")
-                                st.write("Please detain the individual and contact campus security immediately.")
-                                st.markdown('</div>', unsafe_allow_html=True)
-                            else:
-                                st.balloons()
-                                st.markdown('<div class="success-box">', unsafe_allow_html=True)
-                                st.success("✅ OWNERSHIP VERIFIED SUCCESSFULLY!")
-                                
-                                st.subheader("📋 Device Information")
-                                if isinstance(result, (pd.Series, dict)):
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        st.write(f"**Student Name:** {result['student_name']}")
-                                        st.write(f"**Student ID:** {result['student_id']}")
-                                        st.write(f"**Contact:** {result['contact_number']}")
-                                    with col2:
-                                        st.write(f"**Device:** {result['laptop_brand']} {result['laptop_model']}")
-                                        st.write(f"**Serial:** {result['laptop_serial']}")
-                                        st.write(f"**Color:** {result['color']}")
-                                        st.write(f"**Registered:** {result['registration_date']}")
-                                    
-                                    st.markdown('</div>', unsafe_allow_html=True)
-                                    
-                                    # Show QR code from saved file path
-                                    if 'qr_code_path' in result and os.path.exists(result['qr_code_path']):
-                                        st.image(result['qr_code_path'], caption="Registered QR Code", width=200)
-                            
+                        if success == "STOLEN":
+                            st.error("🚨 STOLEN DEVICE DETECTED! 🚨")
+                            st.markdown(f'''
+                            <div class="error-box" style="border: 5px solid #ef4444; animation: pulse 2s infinite;">
+                                <h2 style="color: #ef4444; margin-top: 0;">⚠️ SECURITY ALERT</h2>
+                                <p style="font-size: 1.2rem;"><b>This device is flagged as LOST or STOLEN.</b></p>
+                                <hr>
+                                <b>Owner:</b> {result['student_name']} ({result['student_id']})<br>
+                                <b>Device:</b> {result['laptop_brand']} {result['laptop_model']}<br>
+                                <b>Serial:</b> {result['laptop_serial']}<br>
+                                <hr>
+                                <p style="font-weight: bold; color: #ef4444;">ACTION REQUIRED: Detain individual and contact campus security immediately.</p>
+                            </div>
+                            <style>
+                            @keyframes pulse {{
+                                0% {{ box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }}
+                                70% {{ box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }}
+                                100% {{ box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }}
+                            }}
+                            </style>
+                            ''', unsafe_allow_html=True)
+                        elif success:
+                            st.balloons()
+                            st.success("✅ Ownership Verified Successfully!")
+                            st.markdown(f'''
+                            <div class="success-box">
+                                <h3 style="margin-top: 0;">📋 Device Verified</h3>
+                                <b>Owner:</b> {result['student_name']} ({result['student_id']})<br>
+                                <b>Device:</b> {result['laptop_brand']} {result['laptop_model']}<br>
+                                <b>Serial:</b> {result['laptop_serial']}<br>
+                                <b>Status:</b> {result['status']}<br>
+                                <hr>
+                                <p style="font-size: 0.9rem; color: #065f46;">Logged at {v_location} by {v_name}</p>
+                            </div>
+                            ''', unsafe_allow_html=True)
                         else:
-                            st.markdown('<div class="error-box">', unsafe_allow_html=True)
-                            st.error("❌ VERIFICATION FAILED")
-                            st.write(f"**Reason:** {result}")
-                            st.markdown('</div>', unsafe_allow_html=True)
+                            st.error(f"❌ Verification Failed: {result}")
                     else:
-                        st.markdown('<div class="error-box">❌ Please enter QR code data</div>', unsafe_allow_html=True)
-        
-        with tab2:
-            st.subheader("Manual Verification")
-            st.markdown('<div class="info-box">🔍 Use this when QR code is unavailable or damaged</div>', unsafe_allow_html=True)
+                        st.warning("⚠️ No QR code detected in the image. Please try again with better centering and lighting.")
+
+        with verify_tab2:
+            st.markdown("### 🔍 Manual Verification")
+            st.info("💡 Use this if the QR code is damaged or the camera is unavailable.")
             
-            with st.form("manual_verification"):
+            with st.form("manual_verification_form"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    manual_student_id = st.text_input("Student ID", placeholder="e.g., H240309Y")
-                    manual_location = st.selectbox("Location", 
-                                                ["Main Gate", "Library", "Hostel", "Lecture Hall", "Other"], key="manual_loc")
+                    m_student_id = st.text_input("Student ID", placeholder="e.g., H240309Y")
+                    m_location = st.selectbox("Location", ["Main Gate", "Library", "Hostel", "Lecture Hall", "Other"], key="m_v_loc")
                 with col2:
-                    manual_laptop_serial = st.text_input("Laptop Serial", placeholder="Enter Serial Number")
-                    manual_verified_by = st.text_input("Verified By", value=st.session_state.user['full_name'], key="manual_verifier")
+                    m_serial = st.text_input("Laptop Serial", placeholder="Enter Device Serial")
+                    m_verifier = st.text_input("Verified By", value=st.session_state.user['full_name'], key="m_v_name")
                 
-                if st.form_submit_button("🔍 Verify Manually", use_container_width=True):
-                    if manual_student_id and manual_laptop_serial:
-                        # Search for device
+                if st.form_submit_button("🔍 Verify Now", use_container_width=True):
+                    if m_student_id and m_serial:
                         df = asset_manager.get_all_laptops()
-                        laptop = df[
-                            (df['student_id'] == manual_student_id.upper()) & 
-                            (df['laptop_serial'] == manual_laptop_serial.upper())
-                        ]
+                        laptop = df[(df['student_id'] == m_student_id.upper()) & (df['laptop_serial'] == m_serial.upper())]
                         
                         if not laptop.empty:
                             laptop_data = laptop.iloc[0]
-                            
-                            # Check for lost/stolen status
-                            if laptop_data.get('status') == 'Lost/Stolen':
-                                st.error("🚨 STOLEN DEVICE DETECTED! 🚨")
-                                st.markdown('<div class="error-box">', unsafe_allow_html=True)
-                                st.subheader("⚠️ SECURITY ALERT")
-                                st.write("This device has been reported as **STOLEN** or **LOST**.")
-                                if isinstance(laptop_data, (pd.Series, dict)):
-                                    st.write(f"**Owner:** {laptop_data['student_name']} ({laptop_data['student_id']})")
-                                    st.write(f"**Serial:** {laptop_data['laptop_serial']}")
-                                st.write("Please detain the individual and contact campus security immediately.")
-                                st.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Log detection
-                                asset_manager.log_verification(
-                                    datetime.now().isoformat(),
-                                    manual_student_id.upper(),
-                                    laptop_data['student_name'] if isinstance(laptop_data, (pd.Series, dict)) else "Unknown",
-                                    manual_laptop_serial.upper(),
-                                    "Manual Check",
-                                    manual_location,
-                                    manual_verified_by,
-                                    "STOLEN DEVICE DETECTED"
-                                )
+                            if laptop_data['status'] == 'Lost/Stolen':
+                                st.error("🚨 STOLEN DEVICE DETECTED!")
+                                asset_manager.log_verification(datetime.now().isoformat(), m_student_id.upper(), laptop_data['student_name'], m_serial.upper(), "Manual", m_location, m_verifier, "STOLEN DEVICE DETECTED")
                             else:
-                                st.balloons()
-                                st.markdown('<div class="success-box">', unsafe_allow_html=True)
-                                st.success("✅ OWNERSHIP VERIFIED SUCCESSFULLY!")
-                                
-                                if isinstance(laptop_data, (pd.Series, dict)):
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        st.write(f"**Student Name:** {laptop_data['student_name']}")
-                                        st.write(f"**Student ID:** {laptop_data['student_id']}")
-                                        st.write(f"**Contact:** {laptop_data['contact_number']}")
-                                    with col2:
-                                        st.write(f"**Device:** {laptop_data['laptop_brand']} {laptop_data['laptop_model']}")
-                                        st.write(f"**Serial:** {laptop_data['laptop_serial']}")
-                                        st.write(f"**Color:** {laptop_data['color']}")
-                                
-                                st.markdown('</div>', unsafe_allow_html=True)
-                                
-                                # Log the verification
-                                asset_manager.log_verification(
-                                    datetime.now().isoformat(),
-                                    manual_student_id.upper(),
-                                    laptop_data['student_name'] if isinstance(laptop_data, (pd.Series, dict)) else "Unknown",
-                                    manual_laptop_serial.upper(),
-                                    "Manual Check",
-                                    manual_location,
-                                    manual_verified_by,
-                                    "SUCCESS"
-                                )
-                            
+                                st.success(f"✅ Verified: {laptop_data['student_name']}'s {laptop_data['laptop_brand']}")
+                                asset_manager.log_verification(datetime.now().isoformat(), m_student_id.upper(), laptop_data['student_name'], m_serial.upper(), "Manual", m_location, m_verifier, "SUCCESS")
                         else:
-                            st.markdown('<div class="error-box">', unsafe_allow_html=True)
-                            st.error("❌ VERIFICATION FAILED")
-                            st.write("No matching device found in the system.")
-                            st.markdown('</div>', unsafe_allow_html=True)
-                            
-                            # Log failed attempt
-                            asset_manager.log_verification(
-                                datetime.now().isoformat(),
-                                manual_student_id.upper(),
-                                "Unknown",
-                                manual_laptop_serial.upper(),
-                                "Manual Check",
-                                manual_location,
-                                manual_verified_by,
-                                "FAILED - Not Found"
-                            )
+                            st.error("❌ No matching record found. Potential unregistered device.")
                     else:
-                        st.markdown('<div class="error-box">❌ Please enter both Student ID and Laptop Serial</div>', unsafe_allow_html=True)
+                        st.warning("⚠️ Please provide both Student ID and Serial Number.")
     
     # View All Devices
     elif choice == "📊 View All Devices":
