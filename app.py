@@ -28,6 +28,7 @@ class AssetManager:
         self.logs_file = "data/verification_logs.csv"
         self.users_file = "data/users.csv"
         self.action_logs_file = "data/action_logs.csv"
+        self.notifications_file = "data/notifications.csv"
         self.initialize_files()
     
     def initialize_files(self):
@@ -66,6 +67,12 @@ class AssetManager:
             with open(self.action_logs_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(['timestamp', 'user', 'action', 'target_id', 'details'])
+
+        # Notifications file
+        if not os.path.exists(self.notifications_file):
+            with open(self.notifications_file, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['timestamp', 'student_id', 'message', 'status'])
         
         # Migration: Add status column to existing laptops file if missing
         if os.path.exists(self.laptops_file):
@@ -292,6 +299,10 @@ class AssetManager:
             df.loc[mask, 'status'] = new_status
             df.to_csv(self.laptops_file, index=False)
             
+            # Auto-notify student if status change is significant
+            if new_status in ["Active", "Found", "Pending Verification"]:
+                self.add_notification(student_id, f"Your device (Serial: {laptop_serial}) status has been updated to {new_status}. Please visit the exit point with your ID if recovery is needed.")
+            
             # Log the status change
             self.log_action(st.session_state.user['username'] if 'user' in st.session_state else 'System', 
                             "Status Change", laptop_serial, f"Changed to {new_status} for student {student_id}")
@@ -299,6 +310,48 @@ class AssetManager:
             return True, f"Status updated to {new_status}"
         except Exception as e:
             return False, str(e)
+
+    def get_notifications(self, student_id):
+        """Get notifications for a specific student"""
+        try:
+            if not os.path.exists(self.notifications_file):
+                return pd.DataFrame()
+            df = pd.read_csv(self.notifications_file)
+            return df[df['student_id'] == student_id].sort_values(by='timestamp', ascending=False)
+        except:
+            return pd.DataFrame()
+
+    def add_notification(self, student_id, message):
+        """Add a notification for a student"""
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            new_notif = {
+                'timestamp': timestamp,
+                'student_id': student_id,
+                'message': message,
+                'status': 'Unread'
+            }
+            try:
+                df = pd.read_csv(self.notifications_file)
+            except:
+                df = pd.DataFrame(columns=['timestamp', 'student_id', 'message', 'status'])
+            
+            df = pd.concat([df, pd.DataFrame([new_notif])], ignore_index=True)
+            df.to_csv(self.notifications_file, index=False)
+            return True
+        except Exception as e:
+            print(f"Error adding notification: {e}")
+            return False
+
+    def mark_notifications_read(self, student_id):
+        """Mark all notifications as read for a student"""
+        try:
+            df = pd.read_csv(self.notifications_file)
+            df.loc[df['student_id'] == student_id, 'status'] = 'Read'
+            df.to_csv(self.notifications_file, index=False)
+            return True
+        except:
+            return False
 
     def authenticate(self, username, password):
         """Authenticate user credentials"""
@@ -795,24 +848,104 @@ def main():
         st.session_state.logged_in = False
     if 'user' not in st.session_state:
         st.session_state.user = None
+    if 'role_selection' not in st.session_state:
+        st.session_state.role_selection = None
     
-    # Login Page
+    # Landing Page
+    if not st.session_state.logged_in and st.session_state.role_selection is None:
+        st.markdown("""
+        <div style="text-align: center; margin-bottom: 2rem;">
+            <h2 style="color: #0f172a;">Welcome to HIT Asset Verification System</h2>
+            <p style="color: #64748b; font-size: 1.2rem;">Please select your portal to continue</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            <div class="metric-card" style="cursor: pointer; height: 100%;">
+                <h2 style="font-size: 4rem;">🎓</h2>
+                <h3>Student</h3>
+                <p style="color: #94a3b8; font-size: 0.9rem;">Register devices, report loss, and view QR codes</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("Access Student Portal", use_container_width=True, key="btn_student"):
+                st.session_state.role_selection = "Student"
+                st.rerun()
+                
+        with col2:
+            st.markdown("""
+            <div class="metric-card" style="cursor: pointer; height: 100%;">
+                <h2 style="font-size: 4rem;">🛡️</h2>
+                <h3>Security</h3>
+                <p style="color: #94a3b8; font-size: 0.9rem;">Verify devices and manage security logs</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("Access Security Portal", use_container_width=True, key="btn_security"):
+                st.session_state.role_selection = "Security"
+                st.rerun()
+                
+        with col3:
+            st.markdown("""
+            <div class="metric-card" style="cursor: pointer; height: 100%;">
+                <h2 style="font-size: 4rem;">⚙️</h2>
+                <h3>Admin</h3>
+                <p style="color: #94a3b8; font-size: 0.9rem;">Full system management and user control</p>
+            </div>
+            """, unsafe_allow_html=True)
+            if st.button("Access Admin Portal", use_container_width=True, key="btn_admin"):
+                st.session_state.role_selection = "Admin"
+                st.rerun()
+        return
+
+    # Login Page for selected role
     if not st.session_state.logged_in:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.markdown('<div class="info-box" style="text-align: center;">', unsafe_allow_html=True)
-            st.subheader("🛡️ Security Guard Login")
+            st.markdown(f'<div class="info-box" style="text-align: center;">', unsafe_allow_html=True)
+            st.subheader(f"🛡️ {st.session_state.role_selection} Login")
+            
+            if st.session_state.role_selection == "Student":
+                st.info("💡 Students can use their Student ID as username and password for first-time login.")
+            
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            if st.button("🔐 Login", use_container_width=True):
-                success, user_data = asset_manager.authenticate(username, password)
-                if success:
-                    st.session_state.logged_in = True
-                    st.session_state.user = user_data
-                    asset_manager.log_action(username, "Login", "System", "Successful login")
+            
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                if st.button("⬅️ Back", use_container_width=True):
+                    st.session_state.role_selection = None
                     st.rerun()
-                else:
-                    st.error(f"❌ {user_data}")
+            with col_b2:
+                if st.button("🔐 Login", use_container_width=True):
+                    # Check if student exists in laptops.csv but not users.csv (simple auto-registration for demo)
+                    success, user_data = asset_manager.authenticate(username, password)
+                    
+                    # Student special case: if not in users.csv, check if they have registered laptops
+                    if not success and st.session_state.role_selection == "Student":
+                        laptops_df = asset_manager.get_all_laptops()
+                        if not laptops_df.empty and username.upper() in laptops_df['student_id'].values:
+                            # For demo purposes, we'll allow login if student_id matches and password is same as ID
+                            if password == username:
+                                student_info = laptops_df[laptops_df['student_id'] == username.upper()].iloc[0]
+                                user_data = {
+                                    'username': username.upper(),
+                                    'full_name': student_info['student_name'],
+                                    'role': 'Student'
+                                }
+                                success = True
+                    
+                    if success:
+                        if user_data['role'] != st.session_state.role_selection and not (user_data['role'] == 'Admin' and st.session_state.role_selection == 'Security'):
+                             st.error(f"❌ Access Denied: You do not have {st.session_state.role_selection} privileges.")
+                        else:
+                            st.session_state.logged_in = True
+                            st.session_state.user = user_data
+                            asset_manager.log_action(username, "Login", "System", f"Successful {user_data['role']} login")
+                            st.rerun()
+                    else:
+                        st.error(f"❌ {user_data}")
             st.markdown('</div>', unsafe_allow_html=True)
         return
 
@@ -828,36 +961,62 @@ def main():
         asset_manager.log_action(st.session_state.user['username'], "Logout", "System", "Manual logout")
         st.session_state.logged_in = False
         st.session_state.user = None
+        st.session_state.role_selection = None
         st.rerun()
     
     # Sidebar navigation with custom styling
     st.sidebar.markdown('<div class="sidebar-header">🏢 HIT Navigation</div>', unsafe_allow_html=True)
     
-    menu_options = [
-        "🏠 Dashboard",
-        "📝 Register New Device", 
-        "🔍 Verify Ownership",
-        "📊 View All Devices",
-        "📋 Verification Logs",
-        "📜 System Action Logs",
-        "🚨 Report Lost Device",
-        "⚙️ System Settings"
-    ]
+    # Define menus based on role
+    role = st.session_state.user['role']
     
-    # Only Admin can see User Management
-    if st.session_state.user['role'] == 'Admin':
-        menu_options.insert(6, "👤 User Management")
-    
-    # Status management available to all logged in users for efficiency
-    menu_options.insert(7, "🔄 Manage Device Status")
+    if role == 'Admin':
+        menu_options = [
+            "🏠 Dashboard",
+            "📝 Register New Device", 
+            "🔍 Verify Ownership",
+            "📊 View All Devices",
+            "📋 Verification Logs",
+            "📜 System Action Logs",
+            "👤 User Management",
+            "🔄 Manage Device Status",
+            "🚨 Report Lost Device",
+            "⚙️ System Settings"
+        ]
+    elif role == 'Security':
+        menu_options = [
+            "🏠 Dashboard",
+            "🔍 Verify Ownership",
+            "📊 View All Devices",
+            "📋 Verification Logs",
+            "🔄 Manage Device Status"
+        ]
+    elif role == 'Student':
+        # Get notification count
+        notifs = asset_manager.get_notifications(st.session_state.user['username'])
+        unread_count = len(notifs[notifs['status'] == 'Unread']) if not notifs.empty else 0
+        notif_label = f"🔔 Notifications ({unread_count})" if unread_count > 0 else "🔔 Notifications"
+        
+        menu_options = [
+            "🏠 Dashboard",
+            "📝 Register New Device",
+            "💻 My Devices",
+            "🚨 Report Lost Device",
+            notif_label
+        ]
         
     if 'choice' not in st.session_state:
         st.session_state.choice = "🏠 Dashboard"
         
     for option in menu_options:
-        # Highlight the current selection
-        if st.sidebar.button(option, use_container_width=True):
-            st.session_state.choice = option
+        # Handle dynamic labels for choice matching
+        display_option = option
+        choice_key = option
+        if "🔔 Notifications" in option:
+            choice_key = "🔔 Notifications"
+            
+        if st.sidebar.button(display_option, use_container_width=True):
+            st.session_state.choice = choice_key
             st.rerun()
             
     choice = st.session_state.choice
@@ -866,10 +1025,48 @@ def main():
     
     # Dashboard
     if choice == "🏠 Dashboard":
-        st.markdown('<div class="sub-header">System Dashboard</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="sub-header">{role} Dashboard</div>', unsafe_allow_html=True)
         
-        # Statistics
-        stats = asset_manager.get_statistics()
+        if role == 'Student':
+            # Student specific dashboard
+            student_id = st.session_state.user['username']
+            df = asset_manager.get_all_laptops()
+            my_devices = df[df['student_id'] == student_id] if not df.empty else pd.DataFrame()
+            
+            stats = {
+                'total_my_devices': len(my_devices),
+                'active_devices': len(my_devices[my_devices['status'] == 'Active']) if not my_devices.empty else 0,
+                'lost_reported': len(my_devices[my_devices['status'] == 'Lost/Stolen']) if not my_devices.empty else 0
+            }
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f'<div class="metric-card"><h3>My Devices</h3><h2>{stats["total_my_devices"]}</h2></div>', unsafe_allow_html=True)
+            with col2:
+                st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, #10b981 0%, #065f46 100%);"><h3>Active</h3><h2>{stats["active_devices"]}</h2></div>', unsafe_allow_html=True)
+            with col3:
+                st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);"><h3>Lost</h3><h2>{stats["lost_reported"]}</h2></div>', unsafe_allow_html=True)
+            
+            st.markdown("---")
+            st.subheader("🔔 Recent Notifications")
+            notifs = asset_manager.get_notifications(student_id)
+            if not notifs.empty:
+                for _, notif in notifs.head(3).iterrows():
+                    style = "background: rgba(34, 211, 238, 0.1); border-left: 4px solid #22d3ee;" if notif['status'] == 'Unread' else "background: white; border-left: 4px solid #94a3b8;"
+                    st.markdown(f'''
+                    <div style="padding: 1rem; margin-bottom: 0.5rem; border-radius: 0.5rem; {style}">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="font-weight: 600;">{notif['timestamp']}</span>
+                            <span style="font-size: 0.8rem; color: #64748b;">{notif['status']}</span>
+                        </div>
+                        <div style="margin-top: 0.5rem;">{notif['message']}</div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+            else:
+                st.info("No notifications yet.")
+        else:
+            # Statistics for Admin/Security
+            stats = asset_manager.get_statistics()
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -1043,8 +1240,8 @@ Keep this QR code securely attached to your device.
                 st.subheader("🎓 Student Information")
                 col1, col2 = st.columns(2)
                 with col1:
-                    student_name = st.text_input("Full Name *", placeholder="Enter student's full name")
-                    student_id = st.text_input("Student ID Number *", placeholder="e.g., HIT2001001")
+                    student_name = st.text_input("Full Name *", value=st.session_state.user['full_name'] if role == 'Student' else "", placeholder="Enter student's full name")
+                    student_id = st.text_input("Student ID Number *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="e.g., H240309Y", disabled=(role == 'Student'))
                 with col2:
                     contact_number = st.text_input("Contact Number *", placeholder="e.g., 0771234567")
                 
@@ -1078,7 +1275,8 @@ Keep this QR code securely attached to your device.
                         success, result, qr_img_bytes = asset_manager.register_laptop(student_data)
                         
                         if success:
-                            # Store registration data in session state
+                            # If registered by a student for themselves, they might need to logout and back in to see updated info if they used guest login
+                            # In this system, we'll just store it in session state
                             st.session_state.registration_data = student_data
                             st.session_state.qr_code_bytes = qr_img_bytes
                             st.rerun()
@@ -1172,7 +1370,7 @@ Keep this QR code securely attached to your device.
             with st.form("manual_verification"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    manual_student_id = st.text_input("Student ID", placeholder="Enter Student ID")
+                    manual_student_id = st.text_input("Student ID", placeholder="e.g., H240309Y")
                     manual_location = st.selectbox("Location", 
                                                 ["Main Gate", "Library", "Hostel", "Lecture Hall", "Other"], key="manual_loc")
                 with col2:
@@ -1533,10 +1731,11 @@ Keep this QR code securely attached to your device.
         with st.form("lost_device_form"):
             col1, col2 = st.columns(2)
             with col1:
-                lost_student_id = st.text_input("Student ID *", placeholder="Enter your Student ID")
+                lost_student_id = st.text_input("Student ID *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="e.g., H240309Y", disabled=(role == 'Student'))
                 lost_contact = st.text_input("Contact Number *", placeholder="Where to reach you")
             with col2:
-                lost_laptop_serial = st.text_input("Laptop Serial *", placeholder="Serial number of lost device")
+                default_serial = st.session_state.get('report_serial', "")
+                lost_laptop_serial = st.text_input("Laptop Serial *", value=default_serial, placeholder="Serial number of lost device")
                 lost_location = st.text_input("Where was it lost?", placeholder="e.g., Library, Hostel Room 101")
             
             lost_date = st.date_input("Date Lost", value=datetime.now().date())
@@ -1593,7 +1792,74 @@ Keep this QR code securely attached to your device.
                         st.markdown('<div class="error-box">❌ Device not found. Please check Student ID and Serial Number.</div>', unsafe_allow_html=True)
                 else:
                     st.markdown('<div class="error-box">❌ Please fill in all required fields.</div>', unsafe_allow_html=True)
-    
+
+    # My Devices (Student Only)
+    elif choice == "💻 My Devices":
+        st.markdown('<div class="sub-header">My Registered Devices</div>', unsafe_allow_html=True)
+        
+        student_id = st.session_state.user['username']
+        df = asset_manager.get_all_laptops()
+        my_devices = df[df['student_id'] == student_id] if not df.empty else pd.DataFrame()
+        
+        if my_devices.empty:
+            st.markdown('<div class="info-box">📭 You haven\'t registered any devices yet.</div>', unsafe_allow_html=True)
+            if st.button("📝 Register Your First Device"):
+                st.session_state.choice = "📝 Register New Device"
+                st.rerun()
+        else:
+            for _, device in my_devices.iterrows():
+                with st.expander(f"📦 {device['laptop_brand']} {device['laptop_model']} ({device['laptop_serial']}) - {device['status']}"):
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.write(f"**Serial:** {device['laptop_serial']}")
+                        st.write(f"**Color:** {device['color']}")
+                        st.write(f"**Status:** {device['status']}")
+                        st.write(f"**Registered on:** {device['registration_date']}")
+                    
+                    with col2:
+                        if os.path.exists(device['qr_code_path']):
+                            st.image(device['qr_code_path'], width=150)
+                            with open(device['qr_code_path'], "rb") as file:
+                                st.download_button(
+                                    label="📥 Download QR Code",
+                                    data=file,
+                                    file_name=f"QR_{device['laptop_serial']}.png",
+                                    mime="image/png",
+                                    use_container_width=True
+                                )
+                    
+                    if device['status'] == 'Active':
+                        if st.button(f"🚨 Report {device['laptop_serial']} as Lost", key=f"lost_{device['laptop_serial']}"):
+                            st.session_state.choice = "🚨 Report Lost Device"
+                            st.session_state.report_serial = device['laptop_serial']
+                            st.rerun()
+
+    # Notifications (Student Only)
+    elif choice == "🔔 Notifications":
+        st.markdown('<div class="sub-header">My Notifications</div>', unsafe_allow_html=True)
+        
+        student_id = st.session_state.user['username']
+        notifs = asset_manager.get_notifications(student_id)
+        
+        if notifs.empty:
+            st.markdown('<div class="info-box">📭 No notifications available.</div>', unsafe_allow_html=True)
+        else:
+            if st.button("✅ Mark All as Read"):
+                asset_manager.mark_notifications_read(student_id)
+                st.rerun()
+                
+            for _, notif in notifs.iterrows():
+                style = "background: rgba(34, 211, 238, 0.1); border-left: 4px solid #22d3ee;" if notif['status'] == 'Unread' else "background: white; border-left: 4px solid #94a3b8;"
+                st.markdown(f'''
+                <div style="padding: 1.5rem; margin-bottom: 1rem; border-radius: 0.75rem; {style} box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <span style="font-weight: 700; color: #1e293b;">{notif['timestamp']}</span>
+                        <span style="background: {'#22d3ee' if notif['status'] == 'Unread' else '#e2e8f0'}; color: {'#083344' if notif['status'] == 'Unread' else '#475569'}; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 700;">{notif['status']}</span>
+                    </div>
+                    <div style="margin-top: 1rem; color: #334155; line-height: 1.5;">{notif['message']}</div>
+                </div>
+                ''', unsafe_allow_html=True)
+
     # System Settings
     elif choice == "⚙️ System Settings":
         st.markdown('<div class="sub-header">System Administration</div>', unsafe_allow_html=True)
