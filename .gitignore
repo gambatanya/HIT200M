@@ -7,3 +7,4 @@ qr_codes/
 data/*.csv
 !data/users.csv
 !data/laptops.csv
+!data/notifications.csv
