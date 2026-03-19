@@ -906,46 +906,82 @@ def main():
             st.markdown(f'<div class="info-box" style="text-align: center;">', unsafe_allow_html=True)
             st.subheader(f"🛡️ {st.session_state.role_selection} Login")
             
+            # Student Sign-Up Toggle
+            is_signup = False
             if st.session_state.role_selection == "Student":
-                st.info("💡 Students can use their Student ID as username and password for first-time login.")
-            
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            
-            col_b1, col_b2 = st.columns(2)
-            with col_b1:
-                if st.button("⬅️ Back", use_container_width=True):
-                    st.session_state.role_selection = None
-                    st.rerun()
-            with col_b2:
-                if st.button("🔐 Login", use_container_width=True):
-                    # Check if student exists in laptops.csv but not users.csv (simple auto-registration for demo)
-                    success, user_data = asset_manager.authenticate(username, password)
-                    
-                    # Student special case: if not in users.csv, check if they have registered laptops
-                    if not success and st.session_state.role_selection == "Student":
-                        laptops_df = asset_manager.get_all_laptops()
-                        if not laptops_df.empty and username.upper() in laptops_df['student_id'].values:
-                            # For demo purposes, we'll allow login if student_id matches and password is same as ID
-                            if password == username:
-                                student_info = laptops_df[laptops_df['student_id'] == username.upper()].iloc[0]
+                tab_login, tab_signup = st.tabs(["🔐 Login", "📝 Register New Student"])
+                with tab_signup:
+                    is_signup = True
+                    with st.form("student_signup_form"):
+                        st.markdown("### 🎓 Create Student Account")
+                        new_full_name = st.text_input("Full Name *")
+                        new_student_id = st.text_input("Student ID (e.g., H240309Y) *")
+                        new_password = st.text_input("Create Password *", type="password")
+                        confirm_password = st.text_input("Confirm Password *", type="password")
+                        
+                        if st.form_submit_button("🚀 Create Account & Login", use_container_width=True):
+                            if not all([new_full_name, new_student_id, new_password, confirm_password]):
+                                st.error("❌ Please fill in all fields.")
+                            elif new_password != confirm_password:
+                                st.error("❌ Passwords do not match.")
+                            else:
                                 user_data = {
-                                    'username': username.upper(),
-                                    'full_name': student_info['student_name'],
+                                    'username': new_student_id.upper(),
+                                    'password': new_password,
+                                    'full_name': new_full_name,
                                     'role': 'Student'
                                 }
-                                success = True
-                    
-                    if success:
-                        if user_data['role'] != st.session_state.role_selection and not (user_data['role'] == 'Admin' and st.session_state.role_selection == 'Security'):
-                             st.error(f"❌ Access Denied: You do not have {st.session_state.role_selection} privileges.")
+                                success, message = asset_manager.register_user(user_data)
+                                if success:
+                                    st.session_state.logged_in = True
+                                    st.session_state.user = user_data
+                                    asset_manager.log_action(user_data['username'], "Sign Up", "System", "New student registered")
+                                    st.success("✅ Account created successfully!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ {message}")
+                with tab_login:
+                    is_signup = False
+            
+            if not is_signup:
+                if st.session_state.role_selection == "Student":
+                    st.info("💡 Log in with your Student ID and chosen password.")
+                
+                username = st.text_input("Username", key="login_user")
+                password = st.text_input("Password", type="password", key="login_pass")
+                
+                col_b1, col_b2 = st.columns(2)
+                with col_b1:
+                    if st.button("⬅️ Back", use_container_width=True):
+                        st.session_state.role_selection = None
+                        st.rerun()
+                with col_b2:
+                    if st.button("🔐 Login", use_container_width=True):
+                        success, user_data = asset_manager.authenticate(username, password)
+                        
+                        # Student special case: if not in users.csv, check if they have registered laptops (legacy)
+                        if not success and st.session_state.role_selection == "Student":
+                            laptops_df = asset_manager.get_all_laptops()
+                            if not laptops_df.empty and username.upper() in laptops_df['student_id'].values:
+                                if password == username:
+                                    student_info = laptops_df[laptops_df['student_id'] == username.upper()].iloc[0]
+                                    user_data = {
+                                        'username': username.upper(),
+                                        'full_name': student_info['student_name'],
+                                        'role': 'Student'
+                                    }
+                                    success = True
+                        
+                        if success:
+                            if user_data['role'] != st.session_state.role_selection and not (user_data['role'] == 'Admin' and st.session_state.role_selection == 'Security'):
+                                 st.error(f"❌ Access Denied: You do not have {st.session_state.role_selection} privileges.")
+                            else:
+                                st.session_state.logged_in = True
+                                st.session_state.user = user_data
+                                asset_manager.log_action(username, "Login", "System", f"Successful {user_data['role']} login")
+                                st.rerun()
                         else:
-                            st.session_state.logged_in = True
-                            st.session_state.user = user_data
-                            asset_manager.log_action(username, "Login", "System", f"Successful {user_data['role']} login")
-                            st.rerun()
-                    else:
-                        st.error(f"❌ {user_data}")
+                            st.error(f"❌ {user_data}")
             st.markdown('</div>', unsafe_allow_html=True)
         return
 
@@ -1728,70 +1764,95 @@ Keep this QR code securely attached to your device.
         
         st.markdown('<div class="error-box">🚨 **Use this section to report lost or stolen devices immediately!**</div>', unsafe_allow_html=True)
         
-        with st.form("lost_device_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                lost_student_id = st.text_input("Student ID *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="e.g., H240309Y", disabled=(role == 'Student'))
-                lost_contact = st.text_input("Contact Number *", placeholder="Where to reach you")
-            with col2:
-                default_serial = st.session_state.get('report_serial', "")
-                lost_laptop_serial = st.text_input("Laptop Serial *", value=default_serial, placeholder="Serial number of lost device")
-                lost_location = st.text_input("Where was it lost?", placeholder="e.g., Library, Hostel Room 101")
+        # New Interactive Flow for Students
+        if role == 'Student':
+            student_id = st.session_state.user['username']
+            df = asset_manager.get_all_laptops()
+            my_devices = df[(df['student_id'] == student_id) & (df['status'] == 'Active')] if not df.empty else pd.DataFrame()
             
-            lost_date = st.date_input("Date Lost", value=datetime.now().date())
-            lost_description = st.text_area("Additional Details", placeholder="Describe the circumstances, distinctive features, etc.")
-            
-            if st.form_submit_button("🚨 Report as Lost", use_container_width=True):
-                if lost_student_id and lost_laptop_serial and lost_contact:
-                    # Verify device exists
-                    df = asset_manager.get_all_laptops()
-                    device = df[
-                        (df['student_id'] == lost_student_id.upper()) & 
-                        (df['laptop_serial'] == lost_laptop_serial.upper())
-                    ]
-                    
-                    if not device.empty:
-                        device_data = device.iloc[0]
-                        
-                        # Update status to Lost/Stolen
-                        asset_manager.update_laptop_status(lost_student_id.upper(), lost_laptop_serial.upper(), "Lost/Stolen")
-                        
-                        # Log the report
-                        asset_manager.log_verification(
-                            datetime.now().isoformat(),
-                            lost_student_id.upper(),
-                            device_data['student_name'],
-                            lost_laptop_serial.upper(),
-                            "Lost Device Report",
-                            lost_location,
-                            "System",
-                            f"LOST - {lost_description}"
-                        )
-                        
-                        st.markdown('<div class="error-box">', unsafe_allow_html=True)
-                        st.error("🚨 LOST DEVICE REPORTED!")
-                        st.write("**Immediate Actions Taken:**")
-                        st.write("1. ✅ Lost report logged in system")
-                        st.write("2. ✅ Security department notified")
-                        st.write("3. ✅ Device flagged for recovery")
-                        st.write("4. ✅ Contact information recorded")
-                        
-                        st.write("\n**Device Information:**")
-                        st.write(f"- **Owner:** {device_data['student_name']}")
-                        st.write(f"- **Device:** {device_data['laptop_brand']} {device_data['laptop_model']}")
-                        st.write(f"- **Serial:** {device_data['laptop_serial']}")
-                        st.write(f"- **Color:** {device_data['color']}")
-                        
-                        st.write("\n**Next Steps:**")
-                        st.write("- Contact campus security immediately")
-                        st.write("- Provide any additional information")
-                        st.write("- Check lost and found regularly")
-                        
-                        st.markdown('</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown('<div class="error-box">❌ Device not found. Please check Student ID and Serial Number.</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<div class="error-box">❌ Please fill in all required fields.</div>', unsafe_allow_html=True)
+            if not my_devices.empty:
+                st.subheader("Select a device to report as lost:")
+                for _, device in my_devices.iterrows():
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"📦 **{device['laptop_brand']} {device['laptop_model']}** (Serial: {device['laptop_serial']})")
+                    with col2:
+                        if st.button("🚨 Report Lost", key=f"report_btn_{device['laptop_serial']}", use_container_width=True):
+                            st.session_state.report_serial = device['laptop_serial']
+                            st.rerun()
+                st.markdown("---")
+
+        # Show the report form if a serial is selected or for non-student users
+        default_serial = st.session_state.get('report_serial', "")
+        
+        if default_serial or role != 'Student':
+            with st.form("lost_device_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    lost_student_id = st.text_input("Student ID *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="e.g., H240309Y", disabled=(role == 'Student'))
+                    lost_contact = st.text_input("Contact Number *", placeholder="Where to reach you")
+                with col2:
+                    lost_laptop_serial = st.text_input("Laptop Serial *", value=default_serial, placeholder="Serial number of lost device")
+                    lost_location = st.text_input("Where was it lost?", placeholder="e.g., Library, Hostel Room 101")
+                
+                lost_date = st.date_input("Date Lost", value=datetime.now().date())
+                lost_description = st.text_area("Additional Details", placeholder="Describe the circumstances, distinctive features, etc.")
+                
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    if st.form_submit_button("🚨 Report as Lost", use_container_width=True):
+                        if lost_student_id and lost_laptop_serial and lost_contact:
+                            # Verify device exists
+                            df = asset_manager.get_all_laptops()
+                            device = df[
+                                (df['student_id'] == lost_student_id.upper()) & 
+                                (df['laptop_serial'] == lost_laptop_serial.upper())
+                            ]
+                            
+                            if not device.empty:
+                                device_data = device.iloc[0]
+                                
+                                # Update status to Lost/Stolen
+                                asset_manager.update_laptop_status(lost_student_id.upper(), lost_laptop_serial.upper(), "Lost/Stolen")
+                                
+                                # Log the report
+                                asset_manager.log_verification(
+                                    datetime.now().isoformat(),
+                                    lost_student_id.upper(),
+                                    device_data['student_name'],
+                                    lost_laptop_serial.upper(),
+                                    "Lost Device Report",
+                                    lost_location,
+                                    "System",
+                                    f"LOST - {lost_description}"
+                                )
+                                
+                                st.markdown('<div class="error-box">', unsafe_allow_html=True)
+                                st.error("🚨 LOST DEVICE REPORTED!")
+                                st.write("**Immediate Actions Taken:**")
+                                st.write("1. ✅ Lost report logged in system")
+                                st.write("2. ✅ Security department notified")
+                                st.write("3. ✅ Device flagged for recovery")
+                                
+                                st.write(f"\n- **Owner:** {device_data['student_name']}")
+                                st.write(f"- **Serial:** {device_data['laptop_serial']}")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                                
+                                # Clear selection
+                                if 'report_serial' in st.session_state:
+                                    del st.session_state.report_serial
+                            else:
+                                st.markdown('<div class="error-box">❌ Device not found. Please check Student ID and Serial Number.</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown('<div class="error-box">❌ Please fill in all required fields.</div>', unsafe_allow_html=True)
+                
+                with col_f2:
+                    if st.form_submit_button("🔄 Cancel / Reset", use_container_width=True):
+                        if 'report_serial' in st.session_state:
+                            del st.session_state.report_serial
+                        st.rerun()
+        else:
+            st.info("💡 Select one of your devices above to report it as lost, or manually register a device if you haven't yet.")
 
     # My Devices (Student Only)
     elif choice == "💻 My Devices":
