@@ -1,1 +1,4 @@
-timestamp,student_id,message,status
+timestamp,student_id,message,status,role
+2026-03-20 07:52:57,H240309Y,Welcome student!,Read,Student
+2026-03-20 07:52:57,SYSTEM,Security Alert: Stolen device!,Read,Security
+2026-03-20 07:52:57,SYSTEM,Admin Alert: New User!,Unread,Admin

@@ -72,7 +72,7 @@ class AssetManager:
         if not os.path.exists(self.notifications_file):
             with open(self.notifications_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(['timestamp', 'student_id', 'message', 'status'])
+                writer.writerow(['timestamp', 'student_id', 'message', 'status', 'role'])
         
         # Migration: Add status column to existing laptops file if missing
         if os.path.exists(self.laptops_file):
@@ -96,6 +96,11 @@ class AssetManager:
                         self.log_action(st.session_state.user['username'] if 'user' in st.session_state else 'System', 
                                         "Flagged - Attempted Duplicate", student_data['laptop_serial'], 
                                         f"Attempt by {student_data['student_id']} on {existing_device['student_id']}'s device")
+                        
+                        # Notify Security and Admin
+                        self.add_notification(student_data['student_id'], f"CRITICAL: Duplicate registration attempt for Serial {student_data['laptop_serial']}! Device confiscated.", role='Security')
+                        self.add_notification(student_data['student_id'], f"Security Alert: Duplicate laptop serial ({student_data['laptop_serial']}) detected. Registration attempt by {student_data['student_id']}.", role='Admin')
+                        
                         return "CONFISCATED", f"CRITICAL: Serial {student_data['laptop_serial']} is already registered to student {existing_device['student_id']}. Device has been FLAG AS CONFISCATED for investigation.", None
                     return False, "Laptop serial number already registered", None
                 
@@ -236,6 +241,11 @@ class AssetManager:
                     verified_by,
                     "STOLEN DEVICE DETECTED"
                 )
+                
+                # Notify Security and Admin
+                self.add_notification(student_id, f"🚨 ALERT: Stolen device (Serial: {laptop_serial}) detected at {location}!", role='Security')
+                self.add_notification(student_id, f"Security Breach: Stolen device (Serial: {laptop_serial}) detected at {location} by {verified_by}.", role='Admin')
+                
                 return "STOLEN", laptop_data
 
             # Log successful verification
@@ -311,30 +321,41 @@ class AssetManager:
         except Exception as e:
             return False, str(e)
 
-    def get_notifications(self, student_id):
-        """Get notifications for a specific student"""
+    def get_notifications(self, student_id=None, role=None):
+        """Get notifications for a specific student or role"""
         try:
             if not os.path.exists(self.notifications_file):
                 return pd.DataFrame()
             df = pd.read_csv(self.notifications_file)
-            return df[df['student_id'] == student_id].sort_values(by='timestamp', ascending=False)
+            
+            # Ensure role column exists (migration for existing files)
+            if 'role' not in df.columns:
+                df['role'] = 'Student'
+                df.to_csv(self.notifications_file, index=False)
+                
+            if student_id:
+                return df[df['student_id'] == student_id].sort_values(by='timestamp', ascending=False)
+            elif role:
+                return df[df['role'] == role].sort_values(by='timestamp', ascending=False)
+            return df.sort_values(by='timestamp', ascending=False)
         except:
             return pd.DataFrame()
 
-    def add_notification(self, student_id, message):
-        """Add a notification for a student"""
+    def add_notification(self, student_id, message, role='Student'):
+        """Add a notification for a student or role"""
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             new_notif = {
                 'timestamp': timestamp,
-                'student_id': student_id,
+                'student_id': student_id if student_id else 'SYSTEM',
                 'message': message,
-                'status': 'Unread'
+                'status': 'Unread',
+                'role': role
             }
             try:
                 df = pd.read_csv(self.notifications_file)
             except:
-                df = pd.DataFrame(columns=['timestamp', 'student_id', 'message', 'status'])
+                df = pd.DataFrame(columns=['timestamp', 'student_id', 'message', 'status', 'role'])
             
             df = pd.concat([df, pd.DataFrame([new_notif])], ignore_index=True)
             df.to_csv(self.notifications_file, index=False)
@@ -343,11 +364,14 @@ class AssetManager:
             print(f"Error adding notification: {e}")
             return False
 
-    def mark_notifications_read(self, student_id):
-        """Mark all notifications as read for a student"""
+    def mark_notifications_read(self, student_id=None, role=None):
+        """Mark notifications as read for a student or role"""
         try:
             df = pd.read_csv(self.notifications_file)
-            df.loc[df['student_id'] == student_id, 'status'] = 'Read'
+            if student_id:
+                df.loc[df['student_id'] == student_id, 'status'] = 'Read'
+            elif role:
+                df.loc[df['role'] == role, 'status'] = 'Read'
             df.to_csv(self.notifications_file, index=False)
             return True
         except:
@@ -385,6 +409,11 @@ class AssetManager:
             # Log the action
             self.log_action(st.session_state.user['username'] if 'user' in st.session_state else 'System', 
                             "Register User", user_data['username'], f"New {user_data['role']} added")
+            
+            # Notify Admin if it's a new student
+            if user_data['role'] == 'Student':
+                self.add_notification(user_data['username'], f"New Student Account Created: {user_data['full_name']} ({user_data['username']})", role='Admin')
+            
             return True, "User registered successfully"
         except Exception as e:
             return False, str(e)
@@ -1036,6 +1065,15 @@ def main():
     # Define menus based on role
     role = st.session_state.user['role']
     
+    # Get notification count for menu label
+    if role == 'Student':
+        notifs = asset_manager.get_notifications(student_id=st.session_state.user['username'])
+    else:
+        notifs = asset_manager.get_notifications(role=role)
+    
+    unread_count = len(notifs[notifs['status'] == 'Unread']) if not notifs.empty else 0
+    notif_label = f"🔔 Notifications ({unread_count})" if unread_count > 0 else "🔔 Notifications"
+
     if role == 'Admin':
         menu_options = [
             "🏠 Dashboard",
@@ -1047,6 +1085,7 @@ def main():
             "👤 User Management",
             "🔄 Manage Device Status",
             "🚨 Report Lost Device",
+            notif_label,
             "⚙️ System Settings"
         ]
     elif role == 'Security':
@@ -1055,14 +1094,11 @@ def main():
             "🔍 Verify Ownership",
             "📊 View All Devices",
             "📋 Verification Logs",
-            "🔄 Manage Device Status"
+            "🔄 Manage Device Status",
+            "🚨 Report Lost Device",
+            notif_label
         ]
     elif role == 'Student':
-        # Get notification count
-        notifs = asset_manager.get_notifications(st.session_state.user['username'])
-        unread_count = len(notifs[notifs['status'] == 'Unread']) if not notifs.empty else 0
-        notif_label = f"🔔 Notifications ({unread_count})" if unread_count > 0 else "🔔 Notifications"
-        
         menu_options = [
             "🏠 Dashboard",
             "📝 Register New Device",
@@ -1183,6 +1219,24 @@ def main():
                     <h2>{stats['stolen_detected']}</h2>
                 </div>
                 """, unsafe_allow_html=True)
+            
+            st.markdown("---")
+            st.subheader("🔔 Recent Notifications")
+            notifs = asset_manager.get_notifications(role=role)
+            if not notifs.empty:
+                for _, notif in notifs.head(3).iterrows():
+                    style = "background: rgba(34, 211, 238, 0.1); border-left: 4px solid #22d3ee;" if notif['status'] == 'Unread' else "background: white; border-left: 4px solid #94a3b8;"
+                    st.markdown(f'''
+                    <div style="padding: 1rem; margin-bottom: 0.5rem; border-radius: 0.5rem; {style}">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="font-weight: 600;">{notif['timestamp']}</span>
+                            <span style="font-size: 0.8rem; color: #64748b;">{notif['status']}</span>
+                        </div>
+                        <div style="margin-top: 0.5rem;"><b>[{notif['student_id']}]</b> {notif['message']}</div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+            else:
+                st.info("No notifications yet.")
         
         # Quick actions
       #  st.markdown("---")
@@ -1345,6 +1399,7 @@ Keep this QR code securely attached to your device.
                             # In this system, we'll just store it in session state
                             st.session_state.registration_data = student_data
                             st.session_state.qr_code_bytes = qr_img_bytes
+                            time.sleep(2)
                             st.rerun()
                         elif success == "CONFISCATED":
                             st.error(result)
@@ -1413,6 +1468,8 @@ Keep this QR code securely attached to your device.
                                 <p style="font-size: 0.9rem; color: #065f46;">Logged at {v_location} by {v_name}</p>
                             </div>
                             ''', unsafe_allow_html=True)
+                            time.sleep(2)
+                            st.rerun()
                         else:
                             st.error(f"❌ Verification Failed: {result}")
                     else:
@@ -1444,6 +1501,8 @@ Keep this QR code securely attached to your device.
                             else:
                                 st.success(f"✅ Verified: {laptop_data['student_name']}'s {laptop_data['laptop_brand']}")
                                 asset_manager.log_verification(datetime.now().isoformat(), m_student_id.upper(), laptop_data['student_name'], m_serial.upper(), "Manual", m_location, m_verifier, "SUCCESS")
+                                time.sleep(2)
+                                st.rerun()
                         else:
                             st.error("❌ No matching record found. Potential unregistered device.")
                     else:
@@ -1649,6 +1708,7 @@ Keep this QR code securely attached to your device.
                         success, message = asset_manager.register_user(user_data)
                         if success:
                             st.success(f"✅ {message}")
+                            time.sleep(2)
                             st.rerun()
                         else:
                             st.error(f"❌ {message}")
@@ -1703,6 +1763,7 @@ Keep this QR code securely attached to your device.
                                 if reason:
                                     asset_manager.log_action(st.session_state.user['username'], "Status Update Info", search_serial.upper(), reason)
                                 st.success(f"✅ {message}")
+                                time.sleep(2)
                                 st.rerun()
                             else:
                                 st.error(f"❌ {message}")
@@ -1778,7 +1839,11 @@ Keep this QR code securely attached to your device.
                                     f"LOST - {lost_description}"
                                 )
                                 
-                                st.markdown('<div class="error-box">', unsafe_allow_html=True)
+                                # Notify Security and Admin
+                                asset_manager.add_notification(lost_student_id.upper(), f"🚨 LOST DEVICE REPORTED: {device_data['laptop_brand']} (Serial: {lost_laptop_serial.upper()})", role='Security')
+                                asset_manager.add_notification(lost_student_id.upper(), f"Admin Alert: {device_data['student_name']} reported device {lost_laptop_serial.upper()} as lost.", role='Admin')
+                                
+                                st.markdown('<div class="success-box">', unsafe_allow_html=True)
                                 st.error("🚨 LOST DEVICE REPORTED!")
                                 st.write("**Immediate Actions Taken:**")
                                 st.write("1. ✅ Lost report logged in system")
@@ -1789,9 +1854,11 @@ Keep this QR code securely attached to your device.
                                 st.write(f"- **Serial:** {device_data['laptop_serial']}")
                                 st.markdown('</div>', unsafe_allow_html=True)
                                 
-                                # Clear selection
+                                # Clear selection and Rerun
                                 if 'report_serial' in st.session_state:
                                     del st.session_state.report_serial
+                                time.sleep(2)
+                                st.rerun()
                             else:
                                 st.markdown('<div class="error-box">❌ Device not found. Please check Student ID and Serial Number.</div>', unsafe_allow_html=True)
                         else:
@@ -1846,18 +1913,24 @@ Keep this QR code securely attached to your device.
                             st.session_state.report_serial = device['laptop_serial']
                             st.rerun()
 
-    # Notifications (Student Only)
     elif choice == "🔔 Notifications":
-        st.markdown('<div class="sub-header">My Notifications</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="sub-header">{role} Notifications</div>', unsafe_allow_html=True)
         
-        student_id = st.session_state.user['username']
-        notifs = asset_manager.get_notifications(student_id)
+        if role == 'Student':
+            target_id = st.session_state.user['username']
+            notifs = asset_manager.get_notifications(student_id=target_id)
+        else:
+            target_id = None
+            notifs = asset_manager.get_notifications(role=role)
         
         if notifs.empty:
             st.markdown('<div class="info-box">📭 No notifications available.</div>', unsafe_allow_html=True)
         else:
             if st.button("✅ Mark All as Read"):
-                asset_manager.mark_notifications_read(student_id)
+                if role == 'Student':
+                    asset_manager.mark_notifications_read(student_id=target_id)
+                else:
+                    asset_manager.mark_notifications_read(role=role)
                 st.rerun()
                 
             for _, notif in notifs.iterrows():
@@ -1949,6 +2022,8 @@ Keep this QR code securely attached to your device.
                     shutil.rmtree(backup_dir)
                     
                     st.markdown(f'<div class="success-box">✅ Backup created: {backup_dir}.zip</div>', unsafe_allow_html=True)
+                    time.sleep(2)
+                    st.rerun()
             
             with col2:
                 # Restore
