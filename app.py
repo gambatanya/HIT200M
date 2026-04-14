@@ -33,6 +33,10 @@ class AssetManager:
     
     def initialize_files(self):
         """Create CSV files with headers if they don't exist"""
+        # Ensure directories exist
+        os.makedirs("data", exist_ok=True)
+        os.makedirs("qr_codes", exist_ok=True)
+        
         # Laptops file
         if not os.path.exists(self.laptops_file):
             with open(self.laptops_file, 'w', newline='', encoding='utf-8') as f:
@@ -40,7 +44,8 @@ class AssetManager:
                 writer.writerow([
                     'student_name', 'student_id', 'laptop_serial', 
                     'laptop_brand', 'laptop_model', 'color', 'contact_number',
-                    'registration_date', 'qr_code_data', 'qr_code_path', 'status'
+                    'registration_date', 'qr_code_data', 'qr_code_path', 'status',
+                    'last_seen_location', 'last_seen_timestamp'
                 ])
         
         # Verification logs file
@@ -79,7 +84,11 @@ class AssetManager:
             df = pd.read_csv(self.laptops_file)
             if 'status' not in df.columns:
                 df['status'] = 'Active'
-                df.to_csv(self.laptops_file, index=False)
+            if 'last_seen_location' not in df.columns:
+                df['last_seen_location'] = 'Unknown'
+            if 'last_seen_timestamp' not in df.columns:
+                df['last_seen_timestamp'] = 'Never'
+            df.to_csv(self.laptops_file, index=False)
     
     def register_laptop(self, student_data):
         """Register a new laptop and generate QR code"""
@@ -91,23 +100,23 @@ class AssetManager:
                 if student_data['laptop_serial'] in existing_data['laptop_serial'].values:
                     existing_device = existing_data[existing_data['laptop_serial'] == student_data['laptop_serial']].iloc[0]
                     if existing_device['student_id'] != student_data['student_id']:
-                        # Flag as confiscated if registered to someone else
-                        self.update_laptop_status(existing_device['student_id'], student_data['laptop_serial'], "Confiscated")
-                        self.log_action(st.session_state.user['username'] if 'user' in st.session_state else 'System', 
+                        # Flag as Lost/Stolen if registered to someone else (per new requirement)
+                        self.update_laptop_status(existing_device['student_id'], student_data['laptop_serial'], "Lost/Stolen")
+                        self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
                                         "Flagged - Attempted Duplicate", student_data['laptop_serial'], 
-                                        f"Attempt by {student_data['student_id']} on {existing_device['student_id']}'s device")
+                                        f"Attempt by {student_data['student_id']} on {existing_device['student_id']}'s device. Device flagged as STOLEN.")
                         
                         # Notify Security and Admin
-                        self.add_notification(student_data['student_id'], f"CRITICAL: Duplicate registration attempt for Serial {student_data['laptop_serial']}! Device confiscated.", role='Security')
-                        self.add_notification(student_data['student_id'], f"Security Alert: Duplicate laptop serial ({student_data['laptop_serial']}) detected. Registration attempt by {student_data['student_id']}.", role='Admin')
+                        self.add_notification(student_data['student_id'], f"CRITICAL: Duplicate registration attempt for Serial {student_data['laptop_serial']}! Device flagged as STOLEN and student {student_data['student_id']} reported.", role='Security')
+                        self.add_notification(student_data['student_id'], f"Security Alert: Duplicate laptop serial ({student_data['laptop_serial']}) detected. Registration attempt by {student_data['student_id']}. Target device ({existing_device['student_id']}) flagged as stolen.", role='Admin')
                         
-                        return "CONFISCATED", f"CRITICAL: Serial {student_data['laptop_serial']} is already registered to student {existing_device['student_id']}. Device has been FLAG AS CONFISCATED for investigation.", None
+                        return "CONFISCATED", f"CRITICAL: Serial {student_data['laptop_serial']} is already registered to student {existing_device['student_id']}. This device has been flagged as STOLEN and you have been reported to security.", None
                     return False, "Laptop serial number already registered", None
                 
-                # Check registration limit (max 5 gadgets per individual)
+                # Check registration limit (max 3 gadgets per individual - updated from 5)
                 student_devices = existing_data[existing_data['student_id'] == student_data['student_id']]
-                if len(student_devices) >= 5:
-                    return False, f"Maximum limit reached: {student_data['student_id']} already has 5 registered gadgets.", None
+                if len(student_devices) >= 3:
+                    return False, f"Maximum limit reached: {student_data['student_id']} already has 3 registered gadgets.", None
             
             # Generate QR code data
             qr_data = {
@@ -150,7 +159,9 @@ class AssetManager:
                 'registration_date': student_data['registration_date'],
                 'qr_code_data': qr_data_str,
                 'qr_code_path': qr_path,
-                'status': 'Active'
+                'status': 'Active',
+                'last_seen_location': 'Registration Desk',
+                'last_seen_timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
             
             # Append to CSV
@@ -159,7 +170,7 @@ class AssetManager:
             new_df.to_csv(self.laptops_file, index=False)
             
             # Log the registration action
-            self.log_action(st.session_state.user['username'] if 'user' in st.session_state else 'System', 
+            self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
                             "Register Device", student_data['laptop_serial'], f"Registered to {student_data['student_id']}")
 
             # Convert PIL Image to bytes for Streamlit display
@@ -259,7 +270,9 @@ class AssetManager:
                 verified_by,
                 "SUCCESS"
             )
-            
+            # Update last seen location
+            self.update_device_sighting(student_id, laptop_serial, location)
+
             return True, laptop_data
             
         except json.JSONDecodeError:
@@ -383,7 +396,11 @@ class AssetManager:
             users_df = pd.read_csv(self.users_file)
             user = users_df[(users_df['username'] == username) & (users_df['password'] == password)]
             if not user.empty:
-                return True, user.iloc[0].to_dict()
+                user_dict = user.iloc[0].to_dict()
+                # Record sightings for all devices owned by this student if they log in
+                if user_dict['role'] == 'Student':
+                    self.record_all_student_devices_sighting(user_dict['username'], "Online Portal")
+                return True, user_dict
             return False, "Invalid username or password"
         except Exception as e:
             return False, f"Authentication error: {str(e)}"
@@ -456,6 +473,37 @@ class AssetManager:
             return logs_df
         except:
             return pd.DataFrame()
+
+    def update_device_sighting(self, student_id, laptop_serial, location):
+        """Update the last seen location and timestamp for a device"""
+        try:
+            df = self.get_all_laptops()
+            if df.empty: return False
+            
+            mask = (df['student_id'] == student_id) & (df['laptop_serial'] == laptop_serial)
+            if df[mask].any().any():
+                df.loc[mask, 'last_seen_location'] = location
+                df.loc[mask, 'last_seen_timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                df.to_csv(self.laptops_file, index=False)
+                return True
+            return False
+        except Exception as e:
+            print(f"Error updating sighting: {e}")
+            return False
+
+    def record_all_student_devices_sighting(self, student_id, location):
+        """Update last seen for ALL devices owned by a student"""
+        try:
+            df = self.get_all_laptops()
+            if df.empty: return
+            
+            mask = (df['student_id'] == student_id)
+            if df[mask].any().any():
+                df.loc[mask, 'last_seen_location'] = location
+                df.loc[mask, 'last_seen_timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                df.to_csv(self.laptops_file, index=False)
+        except Exception as e:
+            print(f"Error recording student sightings: {e}")
     
     def get_statistics(self):
         """Get system statistics"""
@@ -910,137 +958,74 @@ def main():
     if 'role_selection' not in st.session_state:
         st.session_state.role_selection = None
     
-    # Landing Page
-    if not st.session_state.logged_in and st.session_state.role_selection is None:
-        st.markdown("""
-        <div style="text-align: center; margin-bottom: 2rem;">
-            <h2 style="color: #0f172a;">Welcome to HIT Asset Verification System</h2>
-            <p style="color: #64748b; font-size: 1.2rem;">Please select your portal to continue</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("""
-            <div class="metric-card" style="cursor: pointer; height: 100%;">
-                <h2 style="font-size: 4rem;">🎓</h2>
-                <h3>Student</h3>
-                <p style="color: #94a3b8; font-size: 0.9rem;">Register devices, report loss, and view QR codes</p>
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button("Access Student Portal", use_container_width=True, key="btn_student"):
-                st.session_state.role_selection = "Student"
-                st.rerun()
-                
-        with col2:
-            st.markdown("""
-            <div class="metric-card" style="cursor: pointer; height: 100%;">
-                <h2 style="font-size: 4rem;">🛡️</h2>
-                <h3>Security</h3>
-                <p style="color: #94a3b8; font-size: 0.9rem;">Verify devices and manage security logs</p>
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button("Access Security Portal", use_container_width=True, key="btn_security"):
-                st.session_state.role_selection = "Security"
-                st.rerun()
-                
-        with col3:
-            st.markdown("""
-            <div class="metric-card" style="cursor: pointer; height: 100%;">
-                <h2 style="font-size: 4rem;">⚙️</h2>
-                <h3>Admin</h3>
-                <p style="color: #94a3b8; font-size: 0.9rem;">Full system management and user control</p>
-            </div>
-            """, unsafe_allow_html=True)
-            if st.button("Access Admin Portal", use_container_width=True, key="btn_admin"):
-                st.session_state.role_selection = "Admin"
-                st.rerun()
-        return
-
-    # Login Page for selected role
+    # Login Page (Unified)
     if not st.session_state.logged_in:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.markdown(f'<div class="info-box" style="text-align: center;">', unsafe_allow_html=True)
-            st.subheader(f"🛡️ {st.session_state.role_selection} Login")
+            st.subheader(f"🛡️ System Login")
+            st.markdown('<p style="color: #64748b;">Enter your credentials to access the HIT Asset Portal</p>', unsafe_allow_html=True)
             
             # Student Sign-Up Toggle
-            is_signup = False
-            if st.session_state.role_selection == "Student":
-                tab_login, tab_signup = st.tabs(["🔐 Login", "📝 Register New Student"])
-                with tab_signup:
-                    is_signup = True
-                    with st.form("student_signup_form"):
-                        st.markdown("### 🎓 Create Student Account")
-                        new_full_name = st.text_input("Full Name *")
-                        new_student_id = st.text_input("Student ID (e.g., H240309Y) *")
-                        new_password = st.text_input("Create Password *", type="password")
-                        confirm_password = st.text_input("Confirm Password *", type="password")
-                        
-                        if st.form_submit_button("🚀 Create Account & Login", use_container_width=True):
-                            if not all([new_full_name, new_student_id, new_password, confirm_password]):
-                                st.error("❌ Please fill in all fields.")
-                            elif new_password != confirm_password:
-                                st.error("❌ Passwords do not match.")
-                            else:
-                                user_data = {
-                                    'username': new_student_id.upper(),
-                                    'password': new_password,
-                                    'full_name': new_full_name,
-                                    'role': 'Student'
-                                }
-                                success, message = asset_manager.register_user(user_data)
-                                if success:
-                                    st.session_state.logged_in = True
-                                    st.session_state.user = user_data
-                                    asset_manager.log_action(user_data['username'], "Sign Up", "System", "New student registered")
-                                    st.success("✅ Account created successfully!")
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ {message}")
-                with tab_login:
-                    is_signup = False
+            tab_login, tab_signup = st.tabs(["🔐 Login", "📝 New Student Registration"])
             
-            if not is_signup:
-                if st.session_state.role_selection == "Student":
-                    st.info("💡 Log in with your Student ID and chosen password.")
-                
-                username = st.text_input("Username", key="login_user")
-                password = st.text_input("Password", type="password", key="login_pass")
-                
-                col_b1, col_b2 = st.columns(2)
-                with col_b1:
-                    if st.button("⬅️ Back", use_container_width=True):
-                        st.session_state.role_selection = None
-                        st.rerun()
-                with col_b2:
-                    if st.button("🔐 Login", use_container_width=True):
-                        success, user_data = asset_manager.authenticate(username, password)
-                        
-                        # Student special case: if not in users.csv, check if they have registered laptops (legacy)
-                        if not success and st.session_state.role_selection == "Student":
-                            laptops_df = asset_manager.get_all_laptops()
-                            if not laptops_df.empty and username.upper() in laptops_df['student_id'].values:
-                                if password == username:
-                                    student_info = laptops_df[laptops_df['student_id'] == username.upper()].iloc[0]
-                                    user_data = {
-                                        'username': username.upper(),
-                                        'full_name': student_info['student_name'],
-                                        'role': 'Student'
-                                    }
-                                    success = True
-                        
-                        if success:
-                            if user_data['role'] != st.session_state.role_selection and not (user_data['role'] == 'Admin' and st.session_state.role_selection == 'Security'):
-                                 st.error(f"❌ Access Denied: You do not have {st.session_state.role_selection} privileges.")
-                            else:
+            with tab_signup:
+                with st.form("student_signup_form"):
+                    st.markdown("### 🎓 Create Student Account")
+                    new_full_name = st.text_input("Full Name *")
+                    new_student_id = st.text_input("Student ID (e.g., H240309Y) *")
+                    new_password = st.text_input("Create Password *", type="password")
+                    confirm_password = st.text_input("Confirm Password *", type="password")
+                    
+                    if st.form_submit_button("🚀 Create Account & Login", use_container_width=True):
+                        if not all([new_full_name, new_student_id, new_password, confirm_password]):
+                            st.error("❌ Please fill in all fields.")
+                        elif new_password != confirm_password:
+                            st.error("❌ Passwords do not match.")
+                        else:
+                            user_data = {
+                                'username': new_student_id.upper(),
+                                'password': new_password,
+                                'full_name': new_full_name,
+                                'role': 'Student'
+                            }
+                            success, message = asset_manager.register_user(user_data)
+                            if success:
                                 st.session_state.logged_in = True
                                 st.session_state.user = user_data
-                                asset_manager.log_action(username, "Login", "System", f"Successful {user_data['role']} login")
+                                asset_manager.log_action(user_data['username'], "Sign Up", "System", "New student registered")
+                                st.success("✅ Account created successfully!")
                                 st.rerun()
-                        else:
-                            st.error(f"❌ {user_data}")
+                            else:
+                                st.error(f"❌ {message}")
+            
+            with tab_login:
+                username = st.text_input("Username / Student ID", key="login_user")
+                password = st.text_input("Password", type="password", key="login_pass")
+                
+                if st.button("🔐 Login to Portal", use_container_width=True):
+                    success, user_data = asset_manager.authenticate(username, password)
+                    
+                    # Legacy student login support
+                    if not success:
+                        laptops_df = asset_manager.get_all_laptops()
+                        if not laptops_df.empty and username.upper() in laptops_df['student_id'].values:
+                            if password == username:
+                                student_info = laptops_df[laptops_df['student_id'] == username.upper()].iloc[0]
+                                user_data = {
+                                    'username': username.upper(),
+                                    'full_name': student_info['student_name'],
+                                    'role': 'Student'
+                                }
+                                success = True
+                    
+                    if success:
+                        st.session_state.logged_in = True
+                        st.session_state.user = user_data
+                        asset_manager.log_action(username, "Login", "System", f"Successful {user_data['role']} login")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {user_data}")
             st.markdown('</div>', unsafe_allow_html=True)
         return
 
@@ -1079,6 +1064,7 @@ def main():
             "🏠 Dashboard",
             "📝 Register New Device", 
             "🔍 Verify Ownership",
+            "🛰️ Live Device Tracking",
             "📊 View All Devices",
             "📋 Verification Logs",
             "📜 System Action Logs",
@@ -1092,6 +1078,7 @@ def main():
         menu_options = [
             "🏠 Dashboard",
             "🔍 Verify Ownership",
+            "🛰️ Live Device Tracking",
             "📊 View All Devices",
             "📋 Verification Logs",
             "🔄 Manage Device Status",
@@ -1577,68 +1564,62 @@ Keep this QR code securely attached to your device.
     # Verification Logs
     elif choice == "📋 Verification Logs":
         st.markdown('<div class="sub-header">Verification History & Audit Logs</div>', unsafe_allow_html=True)
+        # ... (unchanged lines)
         
-        logs_df = asset_manager.get_verification_logs()
+    # Live Device Tracking
+    elif choice == "🛰️ Live Device Tracking":
+        st.markdown('<div class="sub-header">Live institutional Device Tracking</div>', unsafe_allow_html=True)
+        st.markdown('<div class="info-box">📡 Monitoring devices connected to school network and recent checkpoints</div>', unsafe_allow_html=True)
         
-        if logs_df.empty:
-            st.markdown('<div class="info-box">📭 No verification logs available yet.</div>', unsafe_allow_html=True)
+        df = asset_manager.get_all_laptops()
+        if df.empty:
+            st.info("No devices registered to track.")
         else:
-            st.markdown(f'<div class="success-box">📋 Found {len(logs_df)} verification records</div>', unsafe_allow_html=True)
+            # Stats for tracking
+            tracked_count = len(df[df['last_seen_timestamp'] != 'Never'])
+            stolen_count = len(df[df['status'] == 'Lost/Stolen'])
             
-            # Filters
-            col1, col2, col3 = st.columns(3)
+            col1, col2 = st.columns(2)
             with col1:
-                status_filter = st.selectbox("Filter by Status", ["All", "SUCCESS", "FAILED"])
+                st.markdown(f'<div class="metric-card"><h3>Devices Tracked</h3><h2>{tracked_count}</h2></div>', unsafe_allow_html=True)
             with col2:
-                location_filter = st.selectbox("Filter by Location", ["All"] + list(logs_df['location'].unique()))
-            with col3:
-                date_filter = st.date_input("Filter by Date")
+                st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);"><h3>Stolen Devices</h3><h2>{stolen_count}</h2></div>', unsafe_allow_html=True)
             
-            # Apply filters
-            filtered_logs = logs_df.copy()
-            if status_filter != "All":
-                if status_filter == "SUCCESS":
-                    filtered_logs = filtered_logs[filtered_logs['status'] == 'SUCCESS']
-                else:
-                    filtered_logs = filtered_logs[filtered_logs['status'].str.startswith('FAILED')]
+            st.markdown("### 🛰️ Real-time Movement Logs")
             
-            if location_filter != "All":
-                filtered_logs = filtered_logs[filtered_logs['location'] == location_filter]
+            # Search / Filter
+            search_track = st.text_input("🔍 Track specific Serial or Student ID")
             
-            if date_filter:
-                # Convert to datetime for filtering
-                filtered_logs_temp = filtered_logs.copy()
-                filtered_logs_temp['timestamp'] = pd.to_datetime(filtered_logs_temp['timestamp'])
-                filtered_logs = filtered_logs_temp[filtered_logs_temp['timestamp'].dt.date == date_filter]
+            display_df = df.copy()
+            if search_track:
+                display_df = display_df[
+                    display_df['laptop_serial'].str.contains(search_track, case=False, na=False) |
+                    display_df['student_id'].str.contains(search_track, case=False, na=False)
+                ]
             
-            st.markdown(f'<div class="info-box">🔍 Showing {len(filtered_logs)} filtered records</div>', unsafe_allow_html=True)
+            # Sort by most recently seen
+            display_df = display_df.sort_values(by='last_seen_timestamp', ascending=False)
             
-            # Display logs
-            for _, log in filtered_logs.iterrows():
-                with st.expander(f"{log['timestamp']} - {log['student_name']} - {log['status']}"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(f"**Student:** {log['student_name']} ({log['student_id']})")
-                        st.write(f"**Device:** {log['laptop_serial']}")
-                    with col2:
-                        st.write(f"**Location:** {log['location']}")
-                        st.write(f"**Verified by:** {log['verified_by']}")
-                        st.write(f"**Type:** {log['verification_type']}")
-                    
-                    status_color = "🟢" if log['status'] == 'SUCCESS' else "🔴"
-                    st.write(f"**Status:** {status_color} {log['status']}")
-            
-            # Export Option
-            st.markdown("---")
-            st.subheader("Export Reports for Printing")
-            csv_logs = filtered_logs.to_csv(index=False)
-            st.download_button(
-                label="📥 Download Verification Logs (CSV)",
-                data=csv_logs,
-                file_name=f"Verification_Reports_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+            for _, device in display_df.iterrows():
+                is_stolen = device['status'] == 'Lost/Stolen'
+                status_style = "border: 2px solid #ef4444; background: rgba(239, 68, 68, 0.05);" if is_stolen else "background: white;"
+                status_icon = "🚨" if is_stolen else "💻"
+                
+                st.markdown(f'''
+                <div style="padding: 1.5rem; margin-bottom: 1rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); {status_style}">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-size: 1.2rem; font-weight: 700;">{status_icon} {device['laptop_brand']} {device['laptop_model']}</span><br>
+                            <span style="color: #64748b; font-size: 0.9rem;">Serial: {device['laptop_serial']} | Owner: {device['student_name']} ({device['student_id']})</span>
+                        </div>
+                        <div style="text-align: right;">
+                            <span style="font-weight: 600; color: #0f172a;">📍 {device['last_seen_location']}</span><br>
+                            <span style="font-size: 0.8rem; color: #94a3b8;">🕒 Last seen: {device['last_seen_timestamp']}</span>
+                        </div>
+                    </div>
+                    {'<div style="margin-top: 1rem; color: #ef4444; font-weight: 700;">⚠️ STOLEN DEVICE ACTIVE ON NETWORK</div>' if is_stolen else ''}
+                </div>
+                ''', unsafe_allow_html=True)
 
     # System Action Logs
     elif choice == "📜 System Action Logs":
