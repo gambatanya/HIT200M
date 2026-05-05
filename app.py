@@ -327,7 +327,7 @@ class AssetManager:
                 self.add_notification(student_id, f"Your device (Serial: {laptop_serial}) status has been updated to {new_status}. Please visit the exit point with your ID if recovery is needed.")
             
             # Log the status change
-            self.log_action(st.session_state.user['username'] if 'user' in st.session_state else 'System', 
+            self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
                             "Status Change", laptop_serial, f"Changed to {new_status} for student {student_id}")
 
             return True, f"Status updated to {new_status}"
@@ -347,8 +347,10 @@ class AssetManager:
                 df.to_csv(self.notifications_file, index=False)
                 
             if student_id:
-                return df[df['student_id'] == student_id].sort_values(by='timestamp', ascending=False)
+                # Students only see their own notifications that are specifically marked for Students
+                return df[(df['student_id'] == student_id) & (df['role'] == 'Student')].sort_values(by='timestamp', ascending=False)
             elif role:
+                # Security/Admin see notifications marked for their role
                 return df[df['role'] == role].sort_values(by='timestamp', ascending=False)
             return df.sort_values(by='timestamp', ascending=False)
         except:
@@ -424,7 +426,7 @@ class AssetManager:
             users_df.to_csv(self.users_file, index=False)
             
             # Log the action
-            self.log_action(st.session_state.user['username'] if 'user' in st.session_state else 'System', 
+            self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
                             "Register User", user_data['username'], f"New {user_data['role']} added")
             
             # Notify Admin if it's a new student
@@ -432,6 +434,42 @@ class AssetManager:
                 self.add_notification(user_data['username'], f"New Student Account Created: {user_data['full_name']} ({user_data['username']})", role='Admin')
             
             return True, "User registered successfully"
+        except Exception as e:
+            return False, str(e)
+
+    def delete_user(self, username):
+        """Remove a system user"""
+        try:
+            users_df = self.get_all_users()
+            if users_df.empty or username not in users_df['username'].values:
+                return False, "User not found"
+            
+            # Prevent deleting the main admin
+            if username == 'admin':
+                return False, "Cannot delete the default administrator"
+            
+            users_df = users_df[users_df['username'] != username]
+            users_df.to_csv(self.users_file, index=False)
+            
+            self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
+                            "Delete User", username, "User removed from system")
+            return True, "User deleted successfully"
+        except Exception as e:
+            return False, str(e)
+
+    def update_user_role(self, username, new_role):
+        """Update a user's role"""
+        try:
+            users_df = self.get_all_users()
+            if users_df.empty or username not in users_df['username'].values:
+                return False, "User not found"
+            
+            users_df.loc[users_df['username'] == username, 'role'] = new_role
+            users_df.to_csv(self.users_file, index=False)
+            
+            self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
+                            "Update User Role", username, f"Role changed to {new_role}")
+            return True, "User role updated successfully"
         except Exception as e:
             return False, str(e)
 
@@ -1043,9 +1081,11 @@ def main():
     """, unsafe_allow_html=True)
     
     if st.sidebar.button("🚪 Logout", use_container_width=True):
-        asset_manager.log_action(st.session_state.user['username'], "Logout", "System", "Manual logout")
+        username_to_log = st.session_state.user['username'] if st.session_state.get('user') else "Unknown"
+        asset_manager.log_action(username_to_log, "Logout", "System", "Manual logout")
         st.session_state.logged_in = False
         st.session_state.user = None
+        st.session_state.choice = "🏠 Dashboard"
         st.session_state.role_selection = None
         st.rerun()
     
@@ -1087,7 +1127,6 @@ def main():
             "📊 View All Devices",
             "📋 Verification Logs",
             "🔄 Manage Device Status",
-            "🚨 Report Lost Device",
             notif_label
         ]
     elif role == 'Student':
@@ -1247,23 +1286,24 @@ def main():
          #   if st.button("📊 View Reports", use_container_width=True):
           #      st.session_state.redirect = "View All Devices"
         
-        # Recent activity
-        st.markdown("---")
-        st.markdown('<div class="sub-header">Recent Verifications</div>', unsafe_allow_html=True)
-        
-        logs_df = asset_manager.get_verification_logs()
-        if not logs_df.empty:
-            recent_logs = logs_df.tail(10)
-            for _, log in recent_logs.iterrows():
-                status_color = "🟢" if log['status'] == 'SUCCESS' else "🔴"
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.write(f"{status_color} **{log['student_name']}** - {log['laptop_serial']} at {log['timestamp']}")
-                with col2:
-                    st.write(f"*{log['status']}*")
-                st.markdown("---")
-        else:
-            st.markdown('<div class="info-box">No verification logs available yet.</div>', unsafe_allow_html=True)
+        # Recent activity (Restricted to Staff)
+        if role != 'Student':
+            st.markdown("---")
+            st.markdown('<div class="sub-header">Recent Verifications</div>', unsafe_allow_html=True)
+            
+            logs_df = asset_manager.get_verification_logs()
+            if not logs_df.empty:
+                recent_logs = logs_df.tail(10)
+                for _, log in recent_logs.iterrows():
+                    status_color = "🟢" if log['status'] == 'SUCCESS' else "🔴"
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.write(f"{status_color} **{log['student_name']}** - {log['laptop_serial']} at {log['timestamp']}")
+                    with col2:
+                        st.write(f"*{log['status']}*")
+                    st.markdown("---")
+            else:
+                st.markdown('<div class="info-box">No verification logs available yet.</div>', unsafe_allow_html=True)
     
     # Register New Device
     elif choice == "📝 Register New Device":
@@ -1569,12 +1609,71 @@ Keep this QR code securely attached to your device.
     # Verification Logs
     elif choice == "📋 Verification Logs":
         st.markdown('<div class="sub-header">Verification History & Audit Logs</div>', unsafe_allow_html=True)
-        # ... (unchanged lines)
+        logs_df = asset_manager.get_verification_logs()
+        
+        if logs_df.empty:
+            st.markdown('<div class="info-box">📭 No verification attempts recorded yet.</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="success-box">📋 Found {len(logs_df)} verification records</div>', unsafe_allow_html=True)
+            
+            # Filters
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                v_search = st.text_input("🔍 Search Logs", placeholder="Student Name, ID, or Serial")
+            with col2:
+                v_status = st.selectbox("Status Filter", ["All", "SUCCESS", "FAILED - Not Registered", "STOLEN DEVICE DETECTED"])
+            with col3:
+                if st.button("🔄 Refresh", use_container_width=True):
+                    st.rerun()
+            
+            # Apply Filters
+            filtered_logs = logs_df.copy()
+            if v_search:
+                mask = (
+                    filtered_logs['student_name'].str.contains(v_search, case=False, na=False) |
+                    filtered_logs['student_id'].str.contains(v_search, case=False, na=False) |
+                    filtered_logs['laptop_serial'].str.contains(v_search, case=False, na=False)
+                )
+                filtered_logs = filtered_logs[mask]
+            
+            if v_status != "All":
+                filtered_logs = filtered_logs[filtered_logs['status'] == v_status]
+            
+            # Display Data
+            st.dataframe(
+                filtered_logs.sort_values(by='timestamp', ascending=False),
+                use_container_width=True,
+                height=500
+            )
+            
+            # Export
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="📥 Download all logs (CSV)",
+                    data=logs_df.to_csv(index=False),
+                    file_name=f"Full_Audit_Logs_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            with col2:
+                if st.button("🗑️ Clear Logs", type="secondary", use_container_width=True):
+                     if st.session_state.user['role'] == 'Admin':
+                         st.warning("Are you sure you want to clear all verification logs?")
+                         if st.button("⚠️ CONFIRM CLEAR LOGS"):
+                             if os.path.exists(asset_manager.logs_file):
+                                 os.remove(asset_manager.logs_file)
+                                 asset_manager.initialize_files()
+                                 st.success("Logs cleared!")
+                                 st.rerun()
+                     else:
+                         st.error("Admin permissions required to clear logs.")
         
     # Live Device Tracking
     elif choice == "🛰️ Live Device Tracking":
-        st.markdown('<div class="sub-header">Live institutional Device Tracking</div>', unsafe_allow_html=True)
-        st.markdown('<div class="info-box">📡 Monitoring devices connected to school network and recent checkpoints</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sub-header">Institutional Asset Tracking</div>', unsafe_allow_html=True)
+        st.markdown('<div class="info-box">📡 Monitoring devices connected to the campus network and recent checkpoints.</div>', unsafe_allow_html=True)
         
         df = asset_manager.get_all_laptops()
         if df.empty:
@@ -1584,16 +1683,21 @@ Keep this QR code securely attached to your device.
             tracked_count = len(df[df['last_seen_timestamp'] != 'Never'])
             stolen_count = len(df[df['status'] == 'Lost/Stolen'])
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns([1, 1, 1])
             with col1:
-                st.markdown(f'<div class="metric-card"><h3>Devices Tracked</h3><h2>{tracked_count}</h2></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);"><h3>Active Tracks</h3><h2>{tracked_count}</h2></div>', unsafe_allow_html=True)
             with col2:
-                st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);"><h3>Stolen Devices</h3><h2>{stolen_count}</h2></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, #ef4444 0%, #991b1b 100%);"><h3>Flagged</h3><h2>{stolen_count}</h2></div>', unsafe_allow_html=True)
+            with col3:
+                st.write("")
+                st.write("")
+                if st.button("🔄 Refresh Radar", use_container_width=True):
+                    st.rerun()
             
-            st.markdown("### 🛰️ Real-time Movement Logs")
+            st.markdown("### 📡 Device Proximity Log")
             
             # Search / Filter
-            search_track = st.text_input("🔍 Track specific Serial or Student ID")
+            search_track = st.text_input("🔍 Filter by Student ID or Serial Number", placeholder="e.g. H24001A")
             
             display_df = df.copy()
             if search_track:
@@ -1605,26 +1709,36 @@ Keep this QR code securely attached to your device.
             # Sort by most recently seen
             display_df = display_df.sort_values(by='last_seen_timestamp', ascending=False)
             
+            # Display tracking cards
             for _, device in display_df.iterrows():
                 is_stolen = device['status'] == 'Lost/Stolen'
-                status_style = "border: 2px solid #ef4444; background: rgba(239, 68, 68, 0.05);" if is_stolen else "background: white;"
-                status_icon = "🚨" if is_stolen else "💻"
+                status_color = "#ef4444" if is_stolen else "#22d3ee"
                 
-                st.markdown(f'''
-                <div style="padding: 1.5rem; margin-bottom: 1rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); {status_style}">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <span style="font-size: 1.2rem; font-weight: 700;">{status_icon} {device['laptop_brand']} {device['laptop_model']}</span><br>
-                            <span style="color: #64748b; font-size: 0.9rem;">Serial: {device['laptop_serial']} | Owner: {device['student_name']} ({device['student_id']})</span>
-                        </div>
-                        <div style="text-align: right;">
-                            <span style="font-weight: 600; color: #0f172a;">📍 {device['last_seen_location']}</span><br>
-                            <span style="font-size: 0.8rem; color: #94a3b8;">🕒 Last seen: {device['last_seen_timestamp']}</span>
+                with st.container():
+                    st.markdown(f'''
+                    <div style="
+                        background: white; 
+                        padding: 1.5rem; 
+                        border-radius: 1rem; 
+                        border-left: 5px solid {status_color};
+                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                        margin-bottom: 1rem;
+                    ">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-weight: 700; font-size: 1.1rem; color: #1e293b;">{device['laptop_brand']} {device['laptop_model']}</span>
+                                <span style="background: {status_color}22; color: {status_color}; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 800; margin-left: 10px; text-transform: uppercase;">
+                                    {device['status']}
+                                </span><br>
+                                <span style="color: #64748b; font-size: 0.85rem;">ID: {device['student_id']} | Serial: {device['laptop_serial']}</span>
+                            </div>
+                            <div style="text-align: right;">
+                                <span style="color: #0f172a; font-weight: 600;">📍 {device['last_seen_location']}</span><br>
+                                <span style="color: #94a3b8; font-size: 0.75rem;">🕒 {device['last_seen_timestamp']}</span>
+                            </div>
                         </div>
                     </div>
-                    {'<div style="margin-top: 1rem; color: #ef4444; font-weight: 700;">⚠️ STOLEN DEVICE ACTIVE ON NETWORK</div>' if is_stolen else ''}
-                </div>
-                ''', unsafe_allow_html=True)
+                    ''', unsafe_allow_html=True)
 
     # System Action Logs
     elif choice == "📜 System Action Logs":
@@ -1705,7 +1819,25 @@ Keep this QR code securely attached to your device.
             st.subheader("Manage Existing Users")
             users_df = asset_manager.get_all_users()
             if not users_df.empty:
-                st.dataframe(users_df[['username', 'full_name', 'role']], use_container_width=True)
+                # Display individual user cards with actions
+                for _, user in users_df.iterrows():
+                    with st.expander(f"👤 {user['full_name']} (@{user['username']}) - {user['role']}"):
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            st.write(f"**Username:** {user['username']}")
+                            st.write(f"**Role:** {user['role']}")
+                        with col2:
+                            if user['username'] != 'admin':
+                                if st.button(f"🗑️ Delete {user['username']}", key=f"del_{user['username']}", use_container_width=True):
+                                    success, msg = asset_manager.delete_user(user['username'])
+                                    if success:
+                                        st.success(msg)
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error(msg)
+                            else:
+                                st.info("System Admin cannot be deleted.")
             else:
                 st.info("No users found.")
 
@@ -1714,47 +1846,94 @@ Keep this QR code securely attached to your device.
         st.markdown('<div class="sub-header">Device Status Management</div>', unsafe_allow_html=True)
         st.markdown('<div class="info-box">🔄 Use this section to update the status of a registered device (e.g., from Lost to Active).</div>', unsafe_allow_html=True)
         
-        search_serial = st.text_input("🔍 Search by Laptop Serial Number", placeholder="Enter full serial number")
+        # Get all devices
+        df = asset_manager.get_all_laptops()
         
-        if search_serial:
-            df = asset_manager.get_all_laptops()
-            device = df[df['laptop_serial'] == search_serial.upper()]
+        if df.empty:
+            st.info("No devices registered in the system.")
+        else:
+            # Search and Filter
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                search_q = st.text_input("🔍 Search devices by ID, Serial, or Owner", placeholder="e.g., HP EliteBook, H240, Serial...")
+            with col2:
+                st.write("") # Spacer
+                if st.button("🔄 Reset View", use_container_width=True):
+                    if 'mgmt_serial' in st.session_state:
+                        del st.session_state.mgmt_serial
+                    st.rerun()
+
+            filtered_df = df.copy()
+            if search_q:
+                mask = (
+                    filtered_df['student_id'].str.contains(search_q, case=False, na=False) |
+                    filtered_df['laptop_serial'].str.contains(search_q, case=False, na=False) |
+                    filtered_df['student_name'].str.contains(search_q, case=False, na=False) |
+                    filtered_df['laptop_brand'].str.contains(search_q, case=False, na=False)
+                )
+                filtered_df = filtered_df[mask]
+
+            # Device Selection List
+            st.markdown(f"### 📋 Registered Devices ({len(filtered_df)})")
             
-            if not device.empty:
-                device_data = device.iloc[0]
+            # Show a scrollable list if there are many devices
+            for _, device in filtered_df.iterrows():
+                is_selected = st.session_state.get('mgmt_serial') == device['laptop_serial']
+                bg_color = "rgba(34, 211, 238, 0.05)" if is_selected else "white"
+                border = "2px solid #22d3ee" if is_selected else "1px solid #e2e8f0"
+                
+                with st.container():
+                    st.markdown(f'''
+                    <div style="background: {bg_color}; padding: 1rem; border-radius: 0.75rem; border: {border}; margin-bottom: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <b>{device['laptop_brand']} {device['laptop_model']}</b> - {device['status']}<br>
+                                <span style="font-size: 0.8rem; color: #64748b;">Serial: {device['laptop_serial']} | Owner: {device['student_name']} ({device['student_id']})</span>
+                            </div>
+                        </div>
+                    </div>
+                    ''', unsafe_allow_html=True)
+                    
+                    if st.button(f"⚙️ Manage {device['laptop_serial']}", key=f"mgmt_btn_{device['laptop_serial']}", type="secondary" if not is_selected else "primary", use_container_width=True):
+                        st.session_state.mgmt_serial = device['laptop_serial']
+                        st.rerun()
+
+            # Management Form (only shows if a device is selected)
+            if st.session_state.get('mgmt_serial'):
+                st.markdown("---")
+                selected_serial = st.session_state.mgmt_serial
+                device_data = df[df['laptop_serial'] == selected_serial].iloc[0]
+                
                 st.markdown('<div class="success-box">', unsafe_allow_html=True)
-                st.subheader("📋 Device Information")
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write(f"**Owner:** {device_data['student_name']} ({device_data['student_id']})")
-                    st.write(f"**Device:** {device_data['laptop_brand']} {device_data['laptop_model']}")
-                with col2:
-                    st.write(f"**Current Status:** {device_data['status']}")
-                    st.write(f"**Serial:** {device_data['laptop_serial']}")
+                st.subheader(f"🔄 Update Status: {device_data['laptop_brand']} ({selected_serial})")
+                
+                with st.form("update_status_form_v2"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Owner:** {device_data['student_name']} ({device_data['student_id']})")
+                        new_status = st.selectbox("New Status", ["Active", "Lost/Stolen", "Confiscated"], 
+                                               index=["Active", "Lost/Stolen", "Confiscated"].index(device_data['status']) if device_data['status'] in ["Active", "Lost/Stolen", "Confiscated"] else 0)
+                    with col2:
+                        st.write(f"**Current Status:** {device_data['status']}")
+                        reason = st.text_input("Reason / Comment", placeholder="e.g., Reported found by owner")
+                    
+                    if st.form_submit_button("✅ Save Status Change", use_container_width=True):
+                        success, message = asset_manager.update_laptop_status(device_data['student_id'], selected_serial, new_status)
+                        if success:
+                            if reason:
+                                current_user = st.session_state.user['username'] if st.session_state.get('user') else "System"
+                                asset_manager.log_action(current_user, "Status Update Info", selected_serial, reason)
+                            st.success(f"✅ {message}")
+                            del st.session_state.mgmt_serial
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
-                st.markdown("### Update Status")
-                with st.form("update_status_form"):
-                    new_status = st.selectbox("Select New Status", ["Active", "Lost/Stolen", "Confiscated"], 
-                                           index=["Active", "Lost/Stolen", "Confiscated"].index(device_data['status']) if device_data['status'] in ["Active", "Lost/Stolen", "Confiscated"] else 0)
-                    reason = st.text_input("Reason for change", placeholder="e.g., Device found and returned")
-                    
-                    if st.form_submit_button("✅ Update Device Status", use_container_width=True):
-                        if new_status == device_data['status']:
-                            st.info("Status is already set to " + new_status)
-                        else:
-                            success, message = asset_manager.update_laptop_status(device_data['student_id'], search_serial.upper(), new_status)
-                            if success:
-                                # Log additional details
-                                if reason:
-                                    asset_manager.log_action(st.session_state.user['username'], "Status Update Info", search_serial.upper(), reason)
-                                st.success(f"✅ {message}")
-                                time.sleep(2)
-                                st.rerun()
-                            else:
-                                st.error(f"❌ {message}")
-            else:
-                st.error("❌ Device not found with that serial number.")
+                if st.button("❌ Close Management Form", use_container_width=True):
+                    del st.session_state.mgmt_serial
+                    st.rerun()
 
     # Report Lost Device
     elif choice == "🚨 Report Lost Device":

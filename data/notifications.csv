@@ -2,3 +2,5 @@ timestamp,student_id,message,status,role
 2026-03-20 07:52:57,H240309Y,Welcome student!,Read,Student
 2026-03-20 07:52:57,SYSTEM,Security Alert: Stolen device!,Read,Security
 2026-03-20 07:52:57,SYSTEM,Admin Alert: New User!,Unread,Admin
+2026-05-05 10:15:08,H240001X,New Student Account Created: Mandem G (H240001X),Unread,Admin
+2026-05-05 10:34:18,H240309Y,Your device (Serial: X24425V62) status has been updated to Active. Please visit the exit point with your ID if recovery is needed.,Unread,Student
