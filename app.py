@@ -936,6 +936,10 @@ def main():
     """, unsafe_allow_html=True)
     
     st.markdown("""
+    <style>
+    .glass-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; overflow: hidden; }
+    .glass-element { position: absolute; }
+    </style>
     <div class="glass-container">
         <div class="glass-element glass-sphere delay-1" style="width: 400px; height: 400px; top: -150px; right: -150px;"></div>
         <div class="glass-element glass-cube delay-2" style="width: 250px; height: 250px; bottom: 15%; left: -80px;"></div>
@@ -1000,32 +1004,33 @@ def main():
                                 st.error(f"❌ {message}")
             
             with tab_login:
-                username = st.text_input("Username / Student ID", key="login_user")
-                password = st.text_input("Password", type="password", key="login_pass")
-                
-                if st.button("🔐 Login to Portal", use_container_width=True):
-                    success, user_data = asset_manager.authenticate(username, password)
+                with st.form("login_form"):
+                    username = st.text_input("Username / Student ID", key="login_user", autocomplete="username")
+                    password = st.text_input("Password", type="password", key="login_pass", autocomplete="current-password")
                     
-                    # Legacy student login support
-                    if not success:
-                        laptops_df = asset_manager.get_all_laptops()
-                        if not laptops_df.empty and username.upper() in laptops_df['student_id'].values:
-                            if password == username:
-                                student_info = laptops_df[laptops_df['student_id'] == username.upper()].iloc[0]
-                                user_data = {
-                                    'username': username.upper(),
-                                    'full_name': student_info['student_name'],
-                                    'role': 'Student'
-                                }
-                                success = True
-                    
-                    if success:
-                        st.session_state.logged_in = True
-                        st.session_state.user = user_data
-                        asset_manager.log_action(username, "Login", "System", f"Successful {user_data['role']} login")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ {user_data}")
+                    if st.form_submit_button("🔐 Login to Portal", use_container_width=True):
+                        success, user_data = asset_manager.authenticate(username, password)
+                        
+                        # Legacy student login support
+                        if not success:
+                            laptops_df = asset_manager.get_all_laptops()
+                            if not laptops_df.empty and username.upper() in laptops_df['student_id'].values:
+                                if password == username:
+                                    student_info = laptops_df[laptops_df['student_id'] == username.upper()].iloc[0]
+                                    user_data = {
+                                        'username': username.upper(),
+                                        'full_name': student_info['student_name'],
+                                        'role': 'Student'
+                                    }
+                                    success = True
+                        
+                        if success:
+                            st.session_state.logged_in = True
+                            st.session_state.user = user_data
+                            asset_manager.log_action(username, "Login", "System", f"Successful {user_data['role']} login")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {user_data}")
             st.markdown('</div>', unsafe_allow_html=True)
         return
 
