@@ -323,8 +323,12 @@ class AssetManager:
             df.to_csv(self.laptops_file, index=False)
             
             # Auto-notify student if status change is significant
-            if new_status in ["Active", "Found", "Pending Verification"]:
-                self.add_notification(student_id, f"Your device (Serial: {laptop_serial}) status has been updated to {new_status}. Please visit the exit point with your ID if recovery is needed.")
+            if new_status == "Confiscated":
+                self.add_notification(student_id, f"🚨 URGENT: Your device (Serial: {laptop_serial}) has been CONFISCATED. Please visit the security office immediately for details.")
+            elif new_status == "Lost/Stolen":
+                self.add_notification(student_id, f"⚠️ WARNING: Your device (Serial: {laptop_serial}) has been flagged as LOST/STOLEN.")
+            elif new_status in ["Active", "Found", "Pending Verification"]:
+                self.add_notification(student_id, f"✅ Your device (Serial: {laptop_serial}) status has been updated to {new_status}. Please visit the exit point with your ID if recovery is needed.")
             
             # Log the status change
             self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
