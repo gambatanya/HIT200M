@@ -1151,15 +1151,12 @@ def main():
     if role == 'Admin':
         menu_options = [
             "🏠 Dashboard",
-            "📝 Register New Device", 
-            "🔍 Verify Ownership",
             "🛰️ Live Device Tracking",
             "📊 View All Devices",
             "📋 Verification Logs",
             "📜 System Action Logs",
             "👤 User Management",
             "🔄 Manage Device Status",
-            "🚨 Report Lost Device",
             notif_label,
             "⚙️ System Settings"
         ]
