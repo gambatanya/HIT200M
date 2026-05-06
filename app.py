@@ -1019,7 +1019,7 @@ def main():
                 with st.form("student_signup_form"):
                     st.markdown("### 🎓 Create Student Account")
                     new_full_name = st.text_input("Full Name *")
-                    new_student_id = st.text_input("Student ID (e.g., H240309Y) *")
+                    new_student_id = st.text_input("Student ID *")
                     new_password = st.text_input("Create Password *", type="password")
                     confirm_password = st.text_input("Confirm Password *", type="password")
                     
@@ -1397,7 +1397,7 @@ Keep this QR code securely attached to your device.
                 col1, col2 = st.columns(2)
                 with col1:
                     student_name = st.text_input("Full Name *", value=st.session_state.user['full_name'] if role == 'Student' else "", placeholder="Enter student's full name")
-                    student_id = st.text_input("Student ID Number *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="e.g., H240309Y", disabled=(role == 'Student'))
+                    student_id = st.text_input("Student ID Number *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="", disabled=(role == 'Student'))
                 with col2:
                     contact_number = st.text_input("Contact Number *", placeholder="e.g., 0771234567")
                 
@@ -1518,7 +1518,7 @@ Keep this QR code securely attached to your device.
             with st.form("manual_verification_form"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    m_student_id = st.text_input("Student ID", placeholder="e.g., H240309Y")
+                    m_student_id = st.text_input("Student ID", placeholder="")
                     m_location = st.selectbox("Location", ["Main Gate", "Library", "Hostel", "Lecture Hall", "Other"], key="m_v_loc")
                 with col2:
                     m_serial = st.text_input("Laptop Serial", placeholder="Enter Device Serial")
@@ -1970,11 +1970,11 @@ Keep this QR code securely attached to your device.
             with st.form("lost_device_form"):
                 col1, col2 = st.columns(2)
                 with col1:
-                    lost_student_id = st.text_input("Student ID *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="e.g., H240309Y", disabled=(role == 'Student'))
+                    lost_student_id = st.text_input("Student ID *", value=st.session_state.user['username'] if role == 'Student' else "", placeholder="", disabled=(role == 'Student'))
                     lost_contact = st.text_input("Contact Number *", placeholder="Where to reach you")
                 with col2:
                     lost_laptop_serial = st.text_input("Laptop Serial *", value=default_serial, placeholder="Serial number of lost device")
-                    lost_location = st.text_input("Where was it lost?", placeholder="e.g., Library, Hostel Room 101")
+                    lost_location = st.text_input("Where was it lost?", placeholder="")
                 
                 lost_date = st.date_input("Date Lost", value=datetime.now().date())
                 lost_description = st.text_area("Additional Details", placeholder="Describe the circumstances, distinctive features, etc.")
