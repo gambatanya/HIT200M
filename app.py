@@ -61,11 +61,11 @@ class AssetManager:
         if not os.path.exists(self.users_file):
             with open(self.users_file, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(['username', 'password', 'full_name', 'role'])
+                writer.writerow(['username', 'password', 'full_name', 'role', 'status'])
                 # Default admin: guard1 / password123
-                writer.writerow(['admin', 'admin123', 'System Administrator', 'Admin'])
-                writer.writerow(['guard1', 'password123', 'John Doe (Senior Guard)', 'Security'])
-                writer.writerow(['guard2', 'hit2024', 'Jane Smith', 'Security'])
+                writer.writerow(['admin', 'admin123', 'System Administrator', 'Admin', 'Active'])
+                writer.writerow(['guard1', 'password123', 'John Doe (Senior Guard)', 'Security', 'Active'])
+                writer.writerow(['guard2', 'hit2024', 'Jane Smith', 'Security', 'Active'])
         
         # Action logs file
         if not os.path.exists(self.action_logs_file):
@@ -89,6 +89,13 @@ class AssetManager:
             if 'last_seen_timestamp' not in df.columns:
                 df['last_seen_timestamp'] = 'Never'
             df.to_csv(self.laptops_file, index=False)
+
+        # Migration: Add status column to existing users file if missing
+        if os.path.exists(self.users_file):
+            u_df = pd.read_csv(self.users_file)
+            if 'status' not in u_df.columns:
+                u_df['status'] = 'Active'
+                u_df.to_csv(self.users_file, index=False)
     
     def register_laptop(self, student_data):
         """Register a new laptop and generate QR code"""
@@ -403,6 +410,11 @@ class AssetManager:
             user = users_df[(users_df['username'] == username) & (users_df['password'] == password)]
             if not user.empty:
                 user_dict = user.iloc[0].to_dict()
+                
+                # Check status
+                if user_dict.get('status') != 'Active':
+                    return False, f"Account access denied. Status: {user_dict.get('status')}"
+                
                 # Record sightings for all devices owned by this student if they log in
                 if user_dict['role'] == 'Student':
                     self.record_all_student_devices_sighting(user_dict['username'], "Online Portal")
@@ -423,8 +435,15 @@ class AssetManager:
         try:
             users_df = self.get_all_users()
             if not users_df.empty and user_data['username'] in users_df['username'].values:
+                existing_user = users_df[users_df['username'] == user_data['username']].iloc[0]
+                if existing_user.get('status') == 'Removed':
+                    return False, "Registration refused: This account was previously removed by an administrator."
                 return False, "Username already exists"
             
+            # Ensure status is set to Active for new registrations
+            if 'status' not in user_data:
+                user_data['status'] = 'Active'
+                
             new_row = pd.DataFrame([user_data])
             users_df = pd.concat([users_df, new_row], ignore_index=True)
             users_df.to_csv(self.users_file, index=False)
@@ -452,12 +471,30 @@ class AssetManager:
             if username == 'admin':
                 return False, "Cannot delete the default administrator"
             
-            users_df = users_df[users_df['username'] != username]
+            # 1. Remove all devices associated with this user
+            laptops_df = self.get_all_laptops()
+            if not laptops_df.empty:
+                laptops_to_remove = laptops_df[laptops_df['student_id'] == username]
+                if not laptops_to_remove.empty:
+                    # Remove the QR code files first
+                    for _, laptop in laptops_to_remove.iterrows():
+                        if os.path.exists(laptop['qr_code_path']):
+                            try:
+                                os.remove(laptop['qr_code_path'])
+                            except:
+                                pass
+                    
+                    # Remove from dataframe
+                    laptops_df = laptops_df[laptops_df['student_id'] != username]
+                    laptops_df.to_csv(self.laptops_file, index=False)
+            
+            # 2. Update user status to 'Removed' instead of deleting row
+            users_df.loc[users_df['username'] == username, 'status'] = 'Removed'
             users_df.to_csv(self.users_file, index=False)
             
             self.log_action(st.session_state.user['username'] if st.session_state.get('user') else 'System', 
-                            "Delete User", username, "User removed from system")
-            return True, "User deleted successfully"
+                            "Remove User & Devices", username, f"Account and all associated devices removed from system")
+            return True, "User and associated devices deleted successfully"
         except Exception as e:
             return False, str(e)
 
@@ -1008,9 +1045,12 @@ def main():
     if not st.session_state.logged_in:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.markdown(f'<div class="info-box" style="text-align: center;">', unsafe_allow_html=True)
-            st.subheader(f"🛡️ System Login")
-            st.markdown('<p style="color: #64748b;">Enter your credentials to access the HIT Asset Portal</p>', unsafe_allow_html=True)
+            st.markdown(f"""
+                <div class="info-box" style="text-align: center;">
+                    <h2 style="color: #0f172a; margin-top: 0; margin-bottom: 0.5rem;">🛡️ System Login</h2>
+                    <p style="color: #64748b; margin-bottom: 0;">Enter your credentials to access the HIT Asset Portal</p>
+                </div>
+            """, unsafe_allow_html=True)
             
             # Student Sign-Up Toggle
             tab_login, tab_signup = st.tabs(["🔐 Login", "📝 New Student Registration"])
@@ -1073,7 +1113,7 @@ def main():
                             st.rerun()
                         else:
                             st.error(f"❌ {user_data}")
-            st.markdown('</div>', unsafe_allow_html=True)
+
         return
 
     # Sidebar navigation with custom styling
@@ -1825,21 +1865,26 @@ Keep this QR code securely attached to your device.
             if not users_df.empty:
                 # Display individual user cards with actions
                 for _, user in users_df.iterrows():
-                    with st.expander(f"👤 {user['full_name']} (@{user['username']}) - {user['role']}"):
+                    status_indicator = "🟢" if user.get('status') == 'Active' else "🔴"
+                    with st.expander(f"{status_indicator} {user['full_name']} (@{user['username']}) - {user['role']}"):
                         col1, col2 = st.columns([2, 1])
                         with col1:
                             st.write(f"**Username:** {user['username']}")
                             st.write(f"**Role:** {user['role']}")
+                            st.write(f"**Status:** {user.get('status', 'Active')}")
                         with col2:
                             if user['username'] != 'admin':
-                                if st.button(f"🗑️ Delete {user['username']}", key=f"del_{user['username']}", use_container_width=True):
-                                    success, msg = asset_manager.delete_user(user['username'])
-                                    if success:
-                                        st.success(msg)
-                                        time.sleep(1)
-                                        st.rerun()
-                                    else:
-                                        st.error(msg)
+                                if user.get('status') == 'Active':
+                                    if st.button(f"🗑️ Remove {user['username']}", key=f"del_{user['username']}", use_container_width=True):
+                                        success, msg = asset_manager.delete_user(user['username'])
+                                        if success:
+                                            st.success(msg)
+                                            time.sleep(1)
+                                            st.rerun()
+                                        else:
+                                            st.error(msg)
+                                else:
+                                    st.info("Account is Removed/Banned")
                             else:
                                 st.info("System Admin cannot be deleted.")
             else:
